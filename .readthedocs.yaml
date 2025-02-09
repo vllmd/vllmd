@@ -6,7 +6,7 @@ build:
     rust: "1.82"
   jobs:
     install:
-      - apt-get --yes install "https://github.com/gohugoio/hugo/releases/download/v0.143.1/hugo_0.143.1_linux-amd64.debgogo insall"
+      - sudo apt-get --yes install "https://github.com/gohugoio/hugo/releases/download/v0.143.1/hugo_0.143.1_linux-amd64.debgogo insall"
     build:
       html:
         - hugo build --config .hugo.toml --destination $READTHEDOCS_OUTPUT/html/ --themesDir docs/layout/themes --layoutDir docs/layout --contentDir docs/
