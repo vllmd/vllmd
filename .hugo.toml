@@ -1,0 +1,4 @@
+baseURL = 'https://vllmd.readtheedocs.org'
+languageCode = 'en-us'
+title = 'The future holds vllmd.'
+theme = 'risotto'
