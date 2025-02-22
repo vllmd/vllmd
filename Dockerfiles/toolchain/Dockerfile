@@ -12,20 +12,16 @@ LABEL "com.computelify.version"="${PACKAGE_VERSION}"
 LABEL "com.computelify.component"="toolchain" 
 
 
-###
-#
 # Set global environment variables
-
+#
 ENV WORKSPACE_VENV_PATH="/workspace/source/.venv"
 ENV WORKSPACE_BUILD_PATH="/workspace/build"
 ENV WORKSPACE_SOURCE_PATH="/workspace/source"
 ENV WORKSPACE_TARGET_PATH="/workspace/target"
 ENV WORKSPACE_TEMPORARY_PATH="/workspace/temporary"
-
 ENV RUSTUP_HOME="/usr/local/lib/rustup"
 ENV CARGO_HOME="/usr/local/lib/cargo"
 ENV TMPDIR="/workspace/temporary"
-
 ENV PYTHON="${WORKSPACE_VENV_PATH}/bin/python3"
 ENV PYTHON_EXECUTABLE="${WORKSPACE_VENV_PATH}/bin/python3"
 ENV Python_EXECUTABLE="${WORKSPACE_VENV_PATH}/bin/python3"
@@ -56,11 +52,12 @@ ENV MKL_MODEL="ilp64"
 ENV MKL_LIBRARIES="--linker-arg,--start-group;${MKL_ROOT}/libmkl_intel_${MKL_MODEL}.a;${MKL_ROOT}/libmkl_gnu_thread.a;${MKL_ROOT}/libmkl_core.a;--linker-arg,--end-group"
 ENV ZSTD_CLEVEL="18"
 ENV ZSTD_NBTHREADS="16"
-ENV DEBIAN_FRONTEND="noninteractive"
 
-# COnfigure apt
+
+# Configure apt
 #
-RUN echo 'APT::Install-Recommends "false";' > /etc/apt/apt.conf.d/99-minimal-install
+RUN echo 'APT::Get::Assume-Yes "true";' >> /etc/apt/apt.conf.d/99-minimal-install
+RUN echo 'APT::Install-Recommends "false";' >> /etc/apt/apt.conf.d/99-minimal-install
 RUN echo 'APT::Install-Suggests "false";' >> /etc/apt/apt.conf.d/99-minimal-install
 RUN echo 'APT::Install-Documentation "false";' >> /etc/apt/apt.conf.d/99-minimal-instal
 RUN echo 'APT::Install-Changelogs "false";' >> /etc/apt/apt.conf.d/99-minimal-install
@@ -76,10 +73,8 @@ RUN mkdir --parents "${WORKSPACE_TARGET_PATH}/workspace/target"
 RUN mkdir --parents "${WORKSPACE_TEMPORARY_PATH}/workspace/temporary"
 
 
-###
-#
 # Install industry-standard linux toolchain
-
+#
 RUN apt-get update
 RUN apt-get install apt-utils
 RUN apt-get install build-essential
@@ -120,26 +115,21 @@ RUN apt-get install cmake
 RUN apt-get install ninja-build
 
 
-###
-#
 # Install uv python dependency manager
-
+#
 WORKDIR /usr/local/bin
 RUN curl --output "/usr/local/bin/uv.tar.gz" --location "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz"
 RUN tar --extract --file uv.tar.gz
 RUN mv "/usr/local/bin/uv-x86_64-unknown-linux-gnu/uv"* "/usr/local/bin"
 
 
-###
-#
 # Install NVIDIA toolchain
-
+#
 RUN curl --location --output "cuda-keyring_1.1-1_all.deb" "https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb"
 RUN dpkg --install "cuda-keyring_1.1-1_all.deb"
 RUN apt-get install software-properties-common
 RUN add-apt-repository contrib
 RUN apt-get update
-
 RUN apt-get install cuda-cudart-dev-12-4
 RUN apt-get install cuda-libraries-12-4
 RUN apt-get install cuda-nvcc-12-4
@@ -175,7 +165,6 @@ RUN apt-get install libclang-cpp19-dev
 RUN apt-get install libclang-rt-19-dev-wasm32
 RUN apt-get install libclang-rt-19-dev-wasm32
 RUN apt-get install libclang1-19
-
 RUN update-alternatives --set cuda /usr/local/cuda-12.4
 
 
@@ -207,12 +196,9 @@ RUN echo "/usr/local/cuda-12.4/targets/x86_64-linux/lib" >> "/etc/ld.so.conf.d/t
 RUN ldconfig --verbose
 
 
-###
-#
 # Install Rust toolchain
-
+#
 WORKDIR /workspace/install
-
 RUN curl --location --output rustup-init "https://static.rust-lang.org/rustup/dist/${RUST_ARCH}-unknown-linux-gnu/rustup-init"
 RUN chmod +x rustup-init
 RUN ./rustup-init -y \
@@ -223,18 +209,14 @@ RUN ./rustup-init -y \
 RUN cargo install cargo-deb --locked
 
 
-###
-#
 # Install Golang toolchain
-
+#
 RUN curl --location --output "go${GO_VERSION}.linux-amd64.tar.gz" "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz"
 RUN tar --extract --file "go${GO_VERSION}.linux-amd64.tar.gz"
 RUN mv go "/usr/local"
 
 
-###
-#
 # Build python environment
-
+#
 WORKDIR "${WORKSPACE_SOURCE_PATH}"
 RUN uv venv --python "3.12" --python-preference "only-managed"
