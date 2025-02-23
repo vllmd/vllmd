@@ -1,0 +1,246 @@
+[build-system]
+build-backend = "scikit_build_core.build"
+requires = [
+    "jinja2",
+    "packaging",
+    "scikit-build-core",
+    "setuptools>=61",
+    "setuptools-scm>=8",
+    "torch == 2.5.1",
+    "wheel",
+]
+
+[project]
+authors = [{ email = "hello@vllmd.com", name = "The vLLMd Authors." }]
+license = { "file" = "LICENSE" }
+readme = "README.md"
+classifiers = [
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: Apache Software License",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+    "nvidia-cublas-cu12 == 12.4.5.8",
+    "nvidia-cuda-cupti-cu12 == 12.4.127",
+    "nvidia-cuda-nvrtc-cu12 == 12.4.127",
+    "nvidia-cuda-runtime-cu12 == 12.4.127",
+    "nvidia-cudnn-cu12 == 9.1.0.70",
+    "nvidia-cufft-cu12 == 11.2.1.3",
+    "nvidia-curand-cu12 == 10.3.5.147",
+    "nvidia-cusolver-cu12 == 11.6.1.9",
+    "nvidia-cusparse-cu12 == 12.3.1.170",
+    "nvidia-nccl-cu12 == 2.21.5",
+    "nvidia-nvjitlink-cu12 == 12.4.127",
+    "nvidia-nvtx-cu12 == 12.4.127",
+    "datasets",
+    "ray[adag] == 2.40.0",
+    "torch == 2.5.1",
+    "torchaudio == 2.5.1",
+    "torchvision == 0.20.1",
+    "xformers == 0.0.28.post3; platform_system == 'Linux' and platform_machine == 'x86_64'",
+    "psutil",
+    "sentencepiece",
+    "numpy < 2.0.0",
+    "numba == 0.60.0",
+    "requests >= 2.26.0",
+    "tqdm",
+    "blake3",
+    "py-cpuinfo",
+    "transformers >= 4.48.2",
+    "tokenizers >= 0.19.1",
+    "protobuf",
+    "fastapi[standard] >= 0.107.0, < 0.113.0; python_version < '3.9'",
+    "fastapi[standard]  >= 0.107.0, != 0.113.*, != 0.114.0; python_version >= '3.9'",
+    "aiohttp",
+    "openai >= 1.52.0",
+    "pydantic >= 2.9",
+    "prometheus_client >= 0.18.0",
+    "pillow",
+    "prometheus-fastapi-instrumentator >= 7.0.0",
+    "tiktoken >= 0.6.0",
+    "lm-format-enforcer >= 0.10.9, < 0.11",
+    "outlines == 0.1.11",
+    "lark == 1.2.2",
+    "xgrammar == 0.1.11; platform_machine == 'x86_64'",
+    "typing_extensions >= 4.10",
+    "filelock >= 3.16.1",
+    "partial-json-parser",
+    "pyzmq",
+    "msgspec",
+    "gguf == 0.10.0",
+    "importlib_metadata",
+    "mistral_common[opencv] >= 1.5.0",
+    "pyyaml",
+    "six>=1.16.0; python_version > '3.11'",
+    "setuptools>=74.1.1; python_version > '3.11'",
+    "einops",
+    "compressed-tensors == 0.9.2",
+    "depyf == 0.18.0",
+    "cloudpickle",
+    "watchfiles",
+]
+description = "The VLLMD Inferencing Platform. Sinle-node model serving is provided by this comonent."
+name = "vllm"
+requires-python = ">=3.11"
+version = "0.7.3"
+
+[project.urls]
+Homepage = "https://github.com/vllmd/vllmd"
+Documentation = "https://vllmd.readthedocs.io"
+
+[project.scripts]
+vllm = "vllm.entrypoints.cli.main:main"
+
+[tool.black]
+line-length = 100
+
+[tool.codespell]
+ignore-words-list = "dout, te, indicies, subtile, ElementE"
+skip = "./tests/models/fixtures,./tests/prompts,./benchmarks/sonnet.txt,./tests/lora/data,./build"
+
+[tool.isort]
+skip_gitignore = true
+use_parentheses = true
+
+[tool.mypy]
+check_untyped_defs = true
+exclude = [
+    "vllm/model_executor/parallel_utils/|vllm/model_executor/models/",
+    "vllm/attention/ops/.*\\.py$",
+]
+files = [
+    "vllm/*.py",
+    "vllm/adapter_commons",
+    "vllm/assets",
+    "vllm/entrypoints",
+    "vllm/core",
+    "vllm/inputs",
+    "vllm/logging_utils",
+    "vllm/multimodal",
+    "vllm/platforms",
+    "vllm/transformers_utils",
+    "vllm/triton_utils",
+    "vllm/usage",
+]
+follow_imports = "silent"
+ignore_missing_imports = true
+
+[tool.pymarkdown.plugins.md004]
+style = "sublist"
+
+[tool.pymarkdown.plugins.md013]
+enabled = false
+
+[tool.pymarkdown.plugins.md041]
+enabled = false
+
+[tool.pytest.ini_options]
+markers = [
+    "skip_global_cleanup",
+    "core_model: enable this model test in each PR instead of only nightly",
+    "cpu_model: enable this model test in CPU tests",
+    "quant_model: run this model test under Quantized category",
+    "split: run this test as part of a split",
+    "distributed: run this test only in distributed GPU tests",
+    "skip_v1: do not run this test with v1",
+    "optional: optional tests that are automatically skipped, include --optional to run them",
+]
+
+[tool.ruff]
+exclude = ["examples/other/fp8/quantizer/quantize.py"]
+line-length = 80
+target-version = "py39"
+
+[tool.ruff.lint]
+ignore = ["F405", "F403", "E731", "B007", "UP032", "UP006", "UP035"]
+select = ["E", "F", "UP", "B", "SIM", "G"]
+
+[tool.ruff.lint.per-file-ignores."vllm/_version"]
+py = ["ALL"]
+
+[tool.ruff.lint.per-file-ignores."vllm/version"]
+py = ["F401"]
+
+[tool.scikit-build]
+build-dir = "build"
+experimental = false
+fail = false
+strict-config = true
+
+[tool.scikit-build.build]
+targets = ["install"]
+tool-args = []
+verbose = true
+
+[tool.scikit-build.cmake]
+build-type = "Release"
+source-dir = "."
+
+[tool.scikit-build.cmake.define]
+CAFFE2_USE_CUDNN = "ON"
+CAFFE2_USE_CUFILE = "ON"
+CAFFE2_USE_CUSPARSELT = "ON"
+CMAKE_BUILD_RPATH_USE_ORIGIN = "ON"
+CMAKE_CUDA_ARCHITECTURES = "86"
+CMAKE_INSTALL_RPATH = "$ORIGIN"
+CMAKE_INSTALL_RPATH_USE_LINK_PATH = "ON"
+CMAKE_SKIP_BUILD_RPATH = "OFF"
+CUDA_SUPPORTED_ARCHS = "8.6"
+CUTLASS_ENABLE_CUBLAS = "ON"
+CUTLASS_ENABLE_CUDNN = "ON"
+CUTLASS_ENABLE_F16C = "ON"
+CUTLASS_ENABLE_SM90_EXTENDED_MMA_SHAPES = "ON"
+CUTLASS_LIBRARY_INSTANTATION_LEVEL = "max"
+CUTLASS_LIBRARY_KERNELS = "all"
+CUTLASS_NVCC_ARCHS = "86"
+FA2_ENABLED = "ON"
+FA3_ENABLED = "ON"
+MAX_JOBS = "16"
+NVCC_THREADS = "4"
+TORCH_CUDA_ARCH_LIST = "8.6"
+USE_CUDSS = "ON"
+VLLM_GPU_ARCHES = "86-real"
+VLLM_PYTHON_EXECUTABLE = "/workspace/source/.venv/bin/python3"
+VLLM_TARGET_DEVICE = "cuda"
+
+[tool.scikit-build.logging]
+level = "WARNING"
+
+[tool.scikit-build.wheel]
+build-tag = ""
+cmake = true
+exclude = []
+expand-macos-universal-tags = false
+install-dir = ""
+packages = ["src/vllm", "python/vllm", "vllm"]
+py-api = "cp311"
+
+[tool.sckit-build.editable]
+mode = "redirect"
+rebuild = false
+verbose = true
+
+[tool.sckit-build.ninja]
+make-fallback = true
+version = ">=1.5"
+
+[tool.sckit-build.sdist]
+cmake = false
+exclude = []
+include = ["src/vllm", "python/vllm", "vllm"]
+reproducible = true
+
+[tool.uv]
+cache-dir = "uv-cache"
+no-binary = false
+compile-bytecode = true
+
+[tool.yapfignore]
+ignore_patterns = ["build/**"]
