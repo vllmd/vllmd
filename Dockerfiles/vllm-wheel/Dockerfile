@@ -63,6 +63,7 @@ RUN git -c fetch.parallel=8 \
 # Build wheel
 #
 RUN rm --force "${WORKSPACE_SOURCE_PATH}/vllm/setup.py"
+COPY "README.md" "${WORKSPACE_SOURCE_PATH}/vllm"
 COPY "pyproject.toml" "${WORKSPACE_SOURCE_PATH}/vllm"
 RUN rm --recursive --force "${WORKSPACE_SOURCE_PATH}/.venv"
 WORKDIR "${WORKSPACE_SOURCE_PATH}"
