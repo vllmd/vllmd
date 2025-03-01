@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# vllmd-setup.sh - Proof-of-concept script for setting up VLLMD hypervisor
+# initialzie-vllmd-hypervisor.sh - Proof-of-concept script for setting up VLLMD hypervisor
 #
 # This script implements the core functionality for deploying cloud-hypervisor
 # VMs optimized for inference workloads.
@@ -10,7 +10,7 @@
 # permissions where absolutely necessary.
 #
 # Usage:
-#   bash vllmd-setup.sh [OPTIONS]
+#   bash initialize-vllmd-hypervisor.sh [OPTIONS]
 #
 # Options:
 #   --dry-run                  Show what would be done without making any changes
@@ -24,11 +24,11 @@
 #   --help                     Display this help message
 #
 # Example:
-#   bash vllmd-setup.sh --dry-run
-#   bash vllmd-setup.sh --yes
-#   bash vllmd-setup.sh --no-reboot
-#   bash vllmd-setup.sh --destructive-image-replace
-#   bash vllmd-setup.sh --image-prefix=/mnt/aw --source-raw-image=/mnt/aw/base.raw --hypervisor-fw=/mnt/aw/hypervisor-fw
+#   bash initialzie-vllmd-hypervisor.sh --dry-run
+#   bash initialzie-vllmd-hypervisor.sh --yes
+#   bash initialzie-vllmd-hypervisor.sh --no-reboot
+#   bash initialzie-vllmd-hypervisor.sh --destructive-image-replace
+#   bash initialzie-vllmd-hypervisor.sh --image-prefix=/mnt/aw --source-raw-image=/mnt/aw/base.raw --hypervisor-fw=/mnt/aw/hypervisor-fw
 
 set -euo pipefail
 
