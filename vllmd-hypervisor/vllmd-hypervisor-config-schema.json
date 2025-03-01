@@ -1,0 +1,133 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "VLLMD Hypervisor Configuration Schema",
+  "description": "Schema definition for the VLLMD Hypervisor runtime configuration file",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["global", "runtimes"],
+  "properties": {
+    "global": {
+      "type": "object",
+      "description": "Global configuration settings that apply to all runtimes",
+      "additionalProperties": false,
+      "properties": {
+        "user": {
+          "type": "string",
+          "description": "Username for systemd services"
+        },
+        "state_dir": {
+          "type": "string",
+          "description": "Directory path for state data (can include environment variables like $HOME)"
+        },
+        "config_dir": {
+          "type": "string",
+          "description": "Directory path for configuration files (can include environment variables like $HOME)"
+        },
+        "default_memory_gb": {
+          "type": "integer",
+          "description": "Default memory allocation in GB for runtimes if not specified",
+          "minimum": 1,
+          "default": 16
+        },
+        "default_cpus": {
+          "type": "integer",
+          "description": "Default CPU allocation for runtimes if not specified",
+          "minimum": 1,
+          "default": 4
+        }
+      },
+      "required": ["user"]
+    },
+    "runtimes": {
+      "type": "array",
+      "description": "Array of runtime configurations for virtual machines",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "name"],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "Unique index for the runtime (used in systemd service names)",
+            "minimum": 1
+          },
+          "name": {
+            "type": "string",
+            "description": "Descriptive name for the runtime",
+            "pattern": "^[a-zA-Z0-9_-]+$"
+          },
+          "gpus": {
+            "type": "array",
+            "description": "Array of GPU PCI addresses to assign to the runtime",
+            "items": {
+              "type": "string",
+              "description": "PCI address in the format '0000:00:00.0'",
+              "pattern": "^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\\.[0-9a-fA-F]$"
+            },
+            "minItems": 1
+          },
+          "memory_gb": {
+            "type": "integer",
+            "description": "Memory allocation in GB for this runtime",
+            "minimum": 1
+          },
+          "cpus": {
+            "type": "integer",
+            "description": "Number of CPU cores to allocate to this runtime",
+            "minimum": 1
+          }
+        }
+      },
+      "minItems": 1
+    },
+    "network": {
+      "type": "object",
+      "description": "Network configuration for VM connectivity",
+      "additionalProperties": false,
+      "properties": {
+        "default_interface": {
+          "type": "string",
+          "description": "Default host network interface to use for VM connectivity",
+          "default": "eth0"
+        },
+        "bridge_name": {
+          "type": "string",
+          "description": "Name of the bridge interface to create",
+          "pattern": "^[a-zA-Z0-9_-]+$",
+          "default": "vllmd-br0"
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "global": {
+        "user": "sdake",
+        "state_dir": "$HOME/.local/state/vllmd-hypervisor",
+        "config_dir": "$HOME/.config/vllmd",
+        "default_memory_gb": 16,
+        "default_cpus": 4
+      },
+      "runtimes": [
+        {
+          "index": 1,
+          "gpus": ["0000:01:00.0"],
+          "memory_gb": 32,
+          "cpus": 8,
+          "name": "runtime-1"
+        },
+        {
+          "index": 2,
+          "gpus": ["0000:02:00.0"],
+          "memory_gb": 32,
+          "cpus": 8,
+          "name": "runtime-2"
+        }
+      ],
+      "network": {
+        "default_interface": "eth0",
+        "bridge_name": "vllmd-br0"
+      }
+    }
+  ]
+}
