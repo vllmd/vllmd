@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# precheck.sh - Verify system requirements for VLLMD virtualization
+# precheck-vllmd-hypervisor.sh - Verify system requirements vllmd-hypervisor
 #
 # This script checks if the system meets the prerequisites for running
 # the VLLMD virtualization system, including required packages,
