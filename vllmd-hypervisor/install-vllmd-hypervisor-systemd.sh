@@ -7,6 +7,9 @@ set -euo pipefail
 DRY_RUN=0
 CONFIG_PATH="$HOME/.config/vllmd/vllmd-hypervisor-runtime-defaults.toml"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+VALIDATE="auto"  # auto = validate if validate-config.sh exists
+VALIDATE_MODE="lenient"  # lenient = warn on minor issues, strict = fail on any issue
+SCHEMA_PATH="vllmd-hypervisor-config-schema.json"
 
 # Process command line arguments
 while [[ $# -gt 0 ]]; do
@@ -19,6 +22,23 @@ while [[ $# -gt 0 ]]; do
             CONFIG_PATH="${1#*=}"
             shift
             ;;
+        --validate)
+            VALIDATE="yes"
+            shift
+            ;;
+        --no-validate)
+            VALIDATE="no"
+            shift
+            ;;
+        --validate-strict)
+            VALIDATE="yes"
+            VALIDATE_MODE="strict"
+            shift
+            ;;
+        --schema=*)
+            SCHEMA_PATH="${1#*=}"
+            shift
+            ;;
         --help)
             echo "Usage: $0 [OPTIONS]"
             echo "Install VLLMD runtime systemd services"
@@ -26,6 +46,10 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --dry-run          Show what would be done without making changes"
             echo "  --config=PATH      Specify a custom config file path"
+            echo "  --validate         Validate configuration against schema"
+            echo "  --no-validate      Skip configuration validation"
+            echo "  --validate-strict  Validate configuration in strict mode"
+            echo "  --schema=PATH      Specify a custom schema file path"
             echo "  --help             Display this help message and exit"
             exit 0
             ;;
@@ -129,6 +153,41 @@ if [ ! -f "$CONFIG_PATH" ]; then
     echo "Error: Configuration file not found: $CONFIG_PATH"
     echo "Please create the configuration file first."
     exit 1
+fi
+
+# Validate configuration if requested
+if [[ "$VALIDATE" == "auto" ]]; then
+    # Auto-detect if validation script exists
+    if [ -f "validate-config.sh" ]; then
+        VALIDATE="yes"
+    else
+        VALIDATE="no"
+    fi
+fi
+
+if [[ "$VALIDATE" == "yes" ]]; then
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        print_dry_run "Would validate configuration against schema"
+        print_dry_run "Would run: bash validate-config.sh --config=\"$CONFIG_PATH\" --schema=\"$SCHEMA_PATH\" --$VALIDATE_MODE"
+    else
+        echo "Validating configuration against schema..."
+        if [ -f "validate-config.sh" ]; then
+            if ! bash validate-config.sh --config="$CONFIG_PATH" --schema="$SCHEMA_PATH" --"$VALIDATE_MODE"; then
+                echo "Configuration validation failed."
+                if [[ "$VALIDATE_MODE" == "strict" ]]; then
+                    echo "Fix validation errors before proceeding, or use --no-validate to skip validation."
+                    exit 1
+                else
+                    echo "Continuing despite validation issues in lenient mode."
+                    echo "Use --validate-strict for stricter validation."
+                fi
+            else
+                echo "Configuration validation passed."
+            fi
+        else
+            echo "Warning: validate-config.sh not found. Skipping validation."
+        fi
+    fi
 fi
 
 # Parse the TOML configuration

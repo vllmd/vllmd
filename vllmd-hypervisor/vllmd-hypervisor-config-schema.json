@@ -2,6 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "VLLMD Hypervisor Configuration Schema",
   "description": "Schema definition for the VLLMD Hypervisor runtime configuration file",
+  "version": "1.0.0",
   "type": "object",
   "additionalProperties": false,
   "required": ["global", "runtimes"],
