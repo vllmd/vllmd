@@ -1,5 +1,6 @@
 # VLLMD Hypervisor Runtime Defaults
 # Configuration file for VLLMD virtual machine runtime resources
+# $schema: vllmd-hypervisor-config-schema.json
 
 [global]
 # User for systemd services
