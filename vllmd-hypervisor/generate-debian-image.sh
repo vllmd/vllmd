@@ -17,7 +17,7 @@
 #   --memory=SIZE          Memory size for installation VM (default: 4G)
 #   --disk-size=SIZE       Size of the output disk image in bytes (default: 20G)
 #   --debian-version=VER   Debian version to install (default: bookworm)
-#   --preseed=PATH         Path to custom preseed file (default: use built-in bookworm-preseed-v1.cfg)
+#   --preseed=PATH         Path to custom preseed file (default: use built-in preseed-v1-bookworm.cfg)
 #
 # Examples:
 #   bash generate-debian-image.sh
@@ -40,7 +40,7 @@ PRESEED_PATH=""
 
 # Script directory for accessing default preseed file
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
-DEFAULT_PRESEED="${SCRIPT_DIR}/bookworm-preseed-v1.cfg"
+DEFAULT_PRESEED="${SCRIPT_DIR}/preseed-v1-bookworm.cfg"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
