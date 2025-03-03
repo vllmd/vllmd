@@ -1,12 +1,12 @@
-# Debian VM Image Creation for VLLMD Hypervisor
+# VLLMD Hypervisor Runtime Image Generation
 
-This document describes how to create a Debian VM image for use with VLLMD Hypervisor. The image is generated using a preseed configuration and cloud-hypervisor-v44, resulting in a fully automated installation process.
+This document describes how to create a Debian-based runtime image for use with VLLMD Hypervisor. The image is generated using a preseed configuration and cloud-hypervisor-v44, resulting in a fully automated generation process.
 
 ## Prerequisites
 
 Before using the image generation tool, ensure you have the following dependencies installed:
 
-- cloud-hypervisor-v44 - For running the VM during installation
+- cloud-hypervisor-v44 - For running the generation process
 - dosfstools - For creating the FAT filesystem (provides mkdosfs at /usr/sbin/mkdosfs)
 - mtools - For manipulating the FAT filesystem (provides mcopy at /usr/bin/mcopy)
 - coreutils - For creating the disk image (provides truncate)
@@ -24,13 +24,13 @@ sudo apt install dosfstools mtools coreutils curl iproute2 iptables
 
 ## Usage
 
-The `generate-debian-image.sh` script creates a Debian VM image with the following steps:
+The `generate-debian-image.sh` script creates a VLLMD Hypervisor runtime image with the following steps:
 
 1. Downloads the Debian netinst ISO to a cache location
 2. Creates a preseed configuration disk with timestamp
 3. Creates a raw disk image
-4. Sets up macvtap networking for VM connectivity
-5. Runs cloud-hypervisor-v44 to install Debian using the preseed configuration
+4. Sets up macvtap networking for connectivity
+5. Runs cloud-hypervisor-v44 to generate the runtime image using the preseed configuration
 
 ### Basic Usage
 
@@ -38,7 +38,7 @@ The `generate-debian-image.sh` script creates a Debian VM image with the followi
 bash generate-debian-image.sh
 ```
 
-This will create a Debian Bookworm VM image with default settings.
+This will create a Debian Bookworm-based runtime image with default settings.
 
 ### Advanced Options
 
@@ -52,10 +52,10 @@ Options:
 - `--dry-run`: Show what would be done without making any changes
 - `--force`: Force overwrite of existing files
 - `--state-dir=PATH`: Set custom state directory (default: $HOME/.local/state/vllmd/vllmd-hypervisor)
-- `--output=PATH`: Set custom output path for the VM image
-- `--memory=SIZE`: Memory size for installation VM (default: 16G)
+- `--output=PATH`: Set custom output path for the runtime image
+- `--memory=SIZE`: Memory size for generation process (default: 16G)
 - `--disk-size=SIZE`: Size of the output disk image (default: 20G)
-- `--debian-version=VER`: Debian version to install (default: bookworm)
+- `--debian-version=VER`: Debian version to use (default: bookworm)
 - `--preseed=PATH`: Path to custom preseed file (default: use built-in preseed-v1-bookworm.cfg)
 
 ## Preseed Configuration
@@ -99,7 +99,7 @@ The script uses a predefined preseed configuration file (`preseed-v1-bookworm.cf
   - Regular partitioning method
   - Atomic recipe (single partition)
   - GPT partition table
-  - Uses /dev/vdc as installation target during installation
+  - Uses /dev/vdc as installation target during generation
   - Will be /dev/sda when running in the hypervisor
 
 - **Boot Configuration**:
@@ -121,11 +121,11 @@ The script uses a predefined preseed configuration file (`preseed-v1-bookworm.cf
 
 ## Integration with VLLMD Hypervisor
 
-After generating the Debian VM image, you can use it with VLLMD Hypervisor:
+After generating the runtime image, you can use it with VLLMD Hypervisor:
 
 1. Place the image in a location accessible to VLLMD Hypervisor
 2. Update your VLLMD Hypervisor configuration to use this image as the source image
-3. Start VMs using this base image
+3. Start instances using this base image
 
 Example:
 
@@ -142,7 +142,7 @@ bash initialize-vllmd-hypervisor.sh
 
 ## How It Works
 
-The script performs the following steps to create the VM image:
+The script performs the following steps to create the runtime image:
 
 1. **Preparation**:
    - Validates prerequisites
@@ -169,17 +169,17 @@ The script performs the following steps to create the VM image:
    - Creates an empty raw disk image of the specified size using truncate
    - Names the file with a timestamp for easier management
 
-6. **Running the Installation**:
+6. **Running the Generation Process**:
    - Launches cloud-hypervisor-v44 with:
      - The downloaded netinst ISO
      - The preseed configuration disk as a secondary disk
      - The target disk image
-     - 4 CPUs for the installation VM
+     - 4 CPUs for the generation process
      - Properly configured serial console
      - Macvtap networking for internet connectivity
 
 7. **Cleanup**:
-   - Automatically removes the macvtap device after installation
+   - Automatically removes the macvtap device after generation
    - Cleans up temporary files (preserves cached ISO)
 
 ## Generated Resources and Binaries
@@ -194,21 +194,21 @@ The script generates and uses the following resources:
 2. **Files**:
    - Cached Debian netinst ISO (`$HOME/.cache/vllmd/vllmd-hypervisor/debian-netinst.iso`)
    - Generated preseed disk image (`$BUILD_DIR/$TIMESTAMP-preseed.img`)
-   - VM disk image (`$STATE_DIR/$TIMESTAMP-vllmd-hypervisor-runtime.raw` or custom path with `--output`)
+   - Runtime image (`$STATE_DIR/$TIMESTAMP-vllmd-hypervisor-runtime.raw` or custom path with `--output`)
 
 3. **Network Resources**:
    - Temporary macvtap device (macvtap0)
    - Tap device file (/dev/tap*)
 
-4. **Installed Debian VM Components**:
+4. **Installed Components**:
    - XFS-formatted filesystem on a GPT partition table
    - GRUB2 bootloader configured for serial console
    - User with sudo access
    - Systemd-networkd configuration for network interfaces
-   - Required packages for VM operation
+   - Required packages for operation
 
 5. **Binaries Used**:
-   - `cloud-hypervisor-v44` - For running the VM
+   - `cloud-hypervisor-v44` - For running the generation process
    - `/usr/sbin/mkdosfs` - For creating the FAT filesystem
    - `/usr/bin/mcopy` - For copying files to the FAT filesystem
    - `/usr/bin/mdir` - For verifying files on the FAT filesystem
@@ -224,9 +224,9 @@ The script generates and uses the following resources:
 
 ## Troubleshooting
 
-### Installation Fails
+### Generation Fails
 
-If the installation fails, try:
+If the generation fails, try:
 
 1. Running with `--dry-run` to verify configurations
 2. Checking if macvtap devices are already in use (they will be removed and recreated)
@@ -235,7 +235,7 @@ If the installation fails, try:
 
 ### Network Issues
 
-If you encounter network issues during installation:
+If you encounter network issues during generation:
 
 1. Make sure your host has a valid internet connection
 2. Check that your default network interface is properly detected
@@ -248,4 +248,4 @@ If you encounter issues with cloud-hypervisor-v44:
 
 1. Verify that cloud-hypervisor-v44 is installed and accessible
 2. Check that you're using version 44 specifically, as the script is optimized for this version
-3. Review installation logs for errors
+3. Review generation logs for errors
