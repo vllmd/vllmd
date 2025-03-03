@@ -32,7 +32,7 @@ set -euo pipefail
 # Process command line arguments
 DRY_RUN=0
 FORCE=0
-STATE_DIR="${HOME}/.local/state/vllmd-hypervisor"
+STATE_DIR="${HOME}/.local/state/vllmd/vllmd-hypervisor"
 OUTPUT_PATH=""
 MEMORY_SIZE="16G"
 DISK_SIZE="20G"
@@ -42,6 +42,9 @@ PRESEED_PATH=""
 # Script directory for accessing default preseed file
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 DEFAULT_PRESEED="${SCRIPT_DIR}/preseed-v1-bookworm.cfg"
+
+# Set cache directory for ISO
+CACHE_DIR="${HOME}/.cache/vllmd/vllmd-hypervisor"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -87,9 +90,13 @@ done
 # Get timestamp for file naming
 TIMESTAMP=$(date "+%Y%m%d-%W-%H%M%S")
 
+# Set up shared directory for images
+SHARE_DIR="${HOME}/.local/share/vllmd/vllmd-hypervisor/images"
+mkdir -p "${SHARE_DIR}" 2>/dev/null || true
+
 # Set default OUTPUT_PATH if not specified
 if [[ -z "${OUTPUT_PATH}" ]]; then
-    OUTPUT_PATH="${STATE_DIR}/${TIMESTAMP}-debian-${DEBIAN_VERSION}-vllmd.raw"
+    OUTPUT_PATH="${STATE_DIR}/${TIMESTAMP}-vllmd-hypervisor-runtime.raw"
 fi
 
 # Set default PRESEED_PATH if not specified
@@ -196,15 +203,26 @@ create_directories() {
 download_installer() {
     local iso_url="https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-12.9.0-amd64-netinst.iso"
     local iso_path="${BUILD_DIR}/debian-netinst.iso"
+    local cache_iso="${CACHE_DIR}/debian-netinst.iso"
     
-    # Check if file already exists - reuse if found in any build dir
-    local existing_iso=$(find "${STATE_DIR}" -name "debian-netinst.iso" -type f | head -1)
+    # Create cache directory if it doesn't exist
+    if [[ ! -d "${CACHE_DIR}" ]]; then
+        if [[ "${DRY_RUN}" -eq 0 ]]; then
+            mkdir -p "${CACHE_DIR}"
+            echo "Created cache directory: ${CACHE_DIR}"
+        else
+            echo "[DRY RUN] Would create cache directory: ${CACHE_DIR}"
+        fi
+    fi
     
-    if [[ -n "${existing_iso}" ]]; then
-        echo "Found existing ISO at ${existing_iso}, reusing..."
-        if [[ "${existing_iso}" != "${iso_path}" ]]; then
-            cp "${existing_iso}" "${iso_path}" || { echo "Failed to copy existing ISO"; exit 1; }
+    # Check if file exists in cache
+    if [[ -f "${cache_iso}" ]]; then
+        echo "Found cached ISO at ${cache_iso}, reusing..."
+        if [[ "${DRY_RUN}" -eq 0 ]]; then
+            cp "${cache_iso}" "${iso_path}" || { echo "Failed to copy cached ISO"; exit 1; }
             echo "Copied to ${iso_path}"
+        else
+            echo "[DRY RUN] Would copy cached ISO to ${iso_path}"
         fi
         return
     elif [[ -f "${iso_path}" ]]; then
@@ -216,6 +234,10 @@ download_installer() {
         echo "Downloading Debian netinst ISO..."
         /usr/bin/curl -L -o "${iso_path}" "${iso_url}" || { echo "Failed to download ISO"; exit 1; }
         echo "Download completed."
+        
+        # Cache the ISO for future runs
+        echo "Caching ISO for future use..."
+        cp "${iso_path}" "${cache_iso}" || { echo "Warning: Failed to cache ISO"; }
     else
         echo "[DRY RUN] Would download Debian netinst ISO from:"
         echo "  - ${iso_url}"
@@ -224,14 +246,14 @@ download_installer() {
 
 # Create preseed configuration disk
 create_preseed_disk() {
-    local preseed_disk="${BUILD_DIR}/preseed.img"
+    local preseed_disk="${BUILD_DIR}/${TIMESTAMP}-preseed.img"
     # Use XDG_RUNTIME_DIR for temporary files if available, otherwise fallback to mktemp
     local temp_dir
     if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
-        temp_dir="${XDG_RUNTIME_DIR}/vllmd-hypervisor-$(date +%Y%m%d-%H%M%S)"
+        temp_dir="${XDG_RUNTIME_DIR}/vllmd/vllmd-hypervisor-$(date +%Y%m%d-%H%M%S)"
         mkdir -p "${temp_dir}"
     else
-        temp_dir=$(mktemp -d -p "${TMPDIR:-/tmp}" vllmd-hypervisor-XXXXXXXXXX)
+        temp_dir=$(mktemp -d -p "${TMPDIR:-/tmp}" vllmd-vllmd-hypervisor-XXXXXXXXXX)
     fi
     
     if [[ "${DRY_RUN}" -eq 0 ]]; then
@@ -428,7 +450,7 @@ run_installation() {
         
         # Run cloud-hypervisor-v44 with macvtap networking
         # We redirect FD 3 to the tap device file
-        local preseed_disk="${BUILD_DIR}/preseed.img"
+        local preseed_disk="${BUILD_DIR}/${TIMESTAMP}-preseed.img"
         
 #            --disk path="${iso_path}",readonly=on,id=cdrom \
 #                   path="${OUTPUT_PATH}",readonly=off,id=root \
