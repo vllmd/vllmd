@@ -275,7 +275,7 @@ create_preseed_disk() {
         cp "${PRESEED_PATH}" "${temp_dir}/preseed.cfg"
         
         # Add a marker to the preseed file to ensure it's correctly identified
-        echo "# Preseed file for Debian installation - $(date)" >> "${temp_dir}/preseed.cfg"
+        echo "# Preseed file for VLLMD Hypervisor runtime image - $(date)" >> "${temp_dir}/preseed.cfg"
         
         # Create FAT filesystem image for preseed disk with a specific label
         /usr/sbin/mkdosfs -n "VLLM_PRES" -C "${preseed_disk}" 8192
@@ -327,8 +327,8 @@ create_disk_image() {
     fi
 }
 
-# Run the installation using cloud-hypervisor-v44
-run_installation() {
+# Run the generation process using cloud-hypervisor-v44
+run_generation() {
     local iso_path="${BUILD_DIR}/debian-netinst.iso"
     local preseed_disk="${BUILD_DIR}/preseed.img"
     # ISO-based installation doesn't need kernel command line options
@@ -523,9 +523,9 @@ eza -l ${OUTPUT_PATH}
 #            --console tty \
 #            --serial tty
         
-        echo "Debian installation completed."
+        echo "Runtime image generation completed."
     else
-        echo "[DRY RUN] Would start Debian installation with the following configuration:"
+        echo "[DRY RUN] Would start runtime image generation with the following configuration:"
         echo "  - ISO: ${iso_path} (readonly=on)"
         echo "  - Memory: ${MEMORY_SIZE}"
         echo "  - Disk 1: ${OUTPUT_PATH} (${DISK_SIZE}, readonly=off)"
@@ -540,7 +540,7 @@ eza -l ${OUTPUT_PATH}
 
 # Main execution
 main() {
-    echo "VLLMD Hypervisor Debian Image Generator"
+    echo "VLLMD Hypervisor Runtime Image Generator"
     
     # Check prerequisites
     check_prerequisites
@@ -552,7 +552,7 @@ main() {
     create_directories
     
     if [[ "${DRY_RUN}" -eq 1 ]]; then
-        echo "[DRY RUN] Would generate Debian ${DEBIAN_VERSION} VM image"
+        echo "[DRY RUN] Would generate Debian ${DEBIAN_VERSION} runtime image"
         echo "[DRY RUN] Configuration:"
         echo "  - State directory: ${STATE_DIR}"
         echo "  - Output path: ${OUTPUT_PATH}"
@@ -560,7 +560,7 @@ main() {
         echo "  - Disk size: ${DISK_SIZE}"
         echo "  - Preseed file: ${PRESEED_PATH}"
     else
-        echo "Generating Debian ${DEBIAN_VERSION} VM image"
+        echo "Generating Debian ${DEBIAN_VERSION} runtime image"
         echo "Configuration:"
         echo "  - State directory: ${STATE_DIR}"
         echo "  - Output path: ${OUTPUT_PATH}"
@@ -577,11 +577,11 @@ main() {
     # Create disk image
     create_disk_image
     
-    # Run installation
-    run_installation
+    # Run generation process
+    run_generation
     
     if [[ "${DRY_RUN}" -eq 0 ]]; then
-        echo "Debian VM image generation completed successfully."
+        echo "VLLMD Hypervisor runtime image generation completed successfully."
         echo "The image is available at: ${OUTPUT_PATH}"
         echo "You can use this image with VLLMD Hypervisor by specifying it as the source image."
     else
