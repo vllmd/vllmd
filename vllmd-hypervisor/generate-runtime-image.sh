@@ -296,10 +296,10 @@ create_preseed_disk() {
     fi
 }
 
-# Create the VM disk image
+# Create the runtime image disk
 create_disk_image() {
     if [[ "${DRY_RUN}" -eq 0 ]]; then
-        echo "Creating disk image for VM..."
+        echo "Creating disk image for runtime image..."
         
         # Remove existing disk image if it exists and force flag is set
         if [[ -f "${OUTPUT_PATH}" ]]; then
@@ -330,18 +330,7 @@ create_disk_image() {
 # Run the generation process using cloud-hypervisor-v44
 run_generation() {
     local iso_path="${BUILD_DIR}/debian-netinst.iso"
-    local preseed_disk="${BUILD_DIR}/preseed.img"
-    # ISO-based installation doesn't need kernel command line options
-    # These are handled by the bootloader in the ISO
-
-#    local kernel_command_line="console=ttyS0 auto=true priority=critical modules=disk-detect auto-mount=true url=file:///hd-media/preseed.cfg debconf/frontend=texthyyp debian-installer/framebuffer=false DEBIAN_FRONTEND=text break=top"
-#    local kernel_command_line="console=ttyS0 auto=true priority=critical auto-install/enable=true debconf/priorty=critical DEBCONF_DEBUG=5 pressed/url url=file:///hd-media/./preseed.cfg"
-#    preseed/file=hd-media:/dev/disk/by-label/MYLABEL/preseed.cfg
-#    pressed/url file:///hd-media/preseed.cfg
-#    preseed/cdrom_mount=/dev/vdb"
-#    preseed/file string /mnt/cdrom/preseed.cfg
-#    local kernel_command_line="console=ttyS0 auto=true priority=critical DEBCONF_DEBUG=5 preseed/cdrom_mount=/dev/vdb"
-#    preseed/file=/cdrom/preseed.cfg preseed/cdrom_mount=/dev/vdb debconf/priority=critical preseed/file/checksum=skip"
+    local preseed_disk="${BUILD_DIR}/${TIMESTAMP}-preseed.img"
     
     # Function to clean up network resources
     cleanup_network() {
@@ -367,8 +356,8 @@ run_generation() {
     trap cleanup_network EXIT
     
     if [[ "${DRY_RUN}" -eq 0 ]]; then
-        echo "Starting Debian installation using cloud-hypervisor-v44..."
-        echo "This will take some time. Installation logs will be displayed."
+        echo "Starting Debian runtime image generation using cloud-hypervisor-v44..."
+        echo "This will take some time. Generation logs will be displayed."
         
         # First, check if macvtap0 already exists and remove it
         echo "Checking for existing macvtap devices..."
@@ -441,7 +430,7 @@ run_generation() {
         # Make the tap device file accessible
         sudo chmod 666 "${tap_device}" || {
             echo "WARNING: Could not change permissions on ${tap_device}";
-            echo "If the VM fails to start, you may need to run this script as root";
+            echo "If the generation process fails to start, you may need to run this script as root";
         }
         
         echo "Successfully configured macvtap networking via ${macvtap_device}"
@@ -450,58 +439,28 @@ run_generation() {
         
         # Run cloud-hypervisor-v44 with macvtap networking
         # We redirect FD 3 to the tap device file
-        local preseed_disk="${BUILD_DIR}/${TIMESTAMP}-preseed.img"
         
-#            --disk path="${iso_path}",readonly=on,id=cdrom \
-#                   path="${OUTPUT_PATH}",readonly=off,id=root \
-#                   path="${preseed_disk}",readonly=on,id=preseed \
-#            --kernel /home/sdake/repos/arnold-from-computelify/vllmd/vllmd-hypervisor/CLOUDHV.fd \
-#            -vv \
-
-#            --kernel /home/sdake/repos/arnold-from-computelify/vllmd/vllmd-hypervisor/CLOUDHV.fd \
-#            --kernel /var/lib/artificial_wisdom/hypervisor-fw \
-#                   path="${OUTPUT_PATH}",readonly=off,id=root \
-#            --cmdline "console=ttyS0 console=hvc0 auto=true priority=critical root=/dev/vda1 fw" \
-#    local kernel_command_line="console=ttyS0 auto=true priority=critical modules=disk-detect auto-mount=true url=file:///hd-media/preseed.cfg debconf/frontend=texthyyp debian-installer/framebuffer=false DEBIAN_FRONTEND=text break=top"
-#            --cmdline "DEBIAN_FRONTEND=text auto=true priority=critical" \
-#            root=/dev/vda1 fw" \
-#            --cmdline "console=tty0 ``kDEBIAN_FRONTEND=text auto=true priority=critical" \
-#            --disk path="${iso_path}",readonly=on,id=cdrom \
-#                   path="${preseed_disk}",readonly=on,id=perseed \
-#                   path="${OUTPUT_PATH}",id=root \
-#            rd.module_blacklist=nouveau,nvidiafb console=tty0 DEBIAN_FRONTEND=text auto=true priority=critical interface=auto url=file:///preseed.cfg" \
-#            --cmdline "install priority=critical auto=true fb=false url=http://www.xsuckin.com/prseed" \
-#            --cmdline "auto url=autoserver" \
-#            --cmdline "auto=true priority=critical" \
-            #--cmdline "console=ttyS0 auto=true priority=critical interface=auto url=file:///preseed.cfg" \
-#            --kernel "${HOME}/CLOUDHV.fd" \
-#                   path="${preseed_disk}" \
-#                   path="${OUTPUT_PATH}" \
-#            --console pty \
-#            --serial tty
-#            --kernel "hypervisor-fw" \
-
-        # early kernel messages, add console=ttyS0 to cmdline and set flags `--serial tty` and `--console off`.
-        #
-#            --cmdline "console=ttyS0 install nomodeset priority=critical auto=true preseed/file=/cdrom/preseed.cfg debian-installer/framebuffer=false DEBIAN_FRONTEND=text"
-#            --cmdline "console=ttyS0,115200 priority=critical auto=true preseed/file=/preseed.cfg debconf/priority=critical DEBCONF_DEBUG=5 debian-installer/framebuffer=false DEBIAN_FRONTEND=text nogui fb=false auto-install/enable=true preseed/interactive=false debconf/frontend=noninteractive DEBCONF_DEBUG=developer noprompt nomodeset" \
-#
-#
-# serial --unit=0 --speed=115200
-# terminal_input serial; terminal_output serial
-#
-
-# Extract kernel and initrd from the Debian netinst ISO if needed
-# (You can mount the ISO and copy these files out)
-#        debian-installer/locale=en_US keymap=us hostname=myserver domain=local netcfg/choose_interface=auto url=http://your-server/preseed.cfg" \
-# --kernel "${HOME}/CLOUDHV.fd" \
-
-#                   path=t"${OUTPUT_PATH}",id=3 \
-#                   
-#
-
-#dd if=/dev/zero of=${OUTPUT_PATH} bs=4096 count=2048
-eza -l ${OUTPUT_PATH}
+        # Check if required kernel and initramfs files exist
+        if [[ ! -f "$HOME/vmlinuz" ]]; then
+            echo "ERROR: Kernel file $HOME/vmlinuz not found"
+            cleanup_network
+            exit 1
+        fi
+        
+        if [[ ! -f "$HOME/initrd.gz" ]]; then
+            echo "ERROR: Initramfs file $HOME/initrd.gz not found"
+            cleanup_network
+            exit 1
+        fi
+        
+        # Verify output path exists before running cloud-hypervisor
+        if [[ ! -f "${OUTPUT_PATH}" ]]; then
+            echo "ERROR: Output disk image ${OUTPUT_PATH} not found"
+            cleanup_network
+            exit 1
+        fi
+        
+        echo "Running cloud-hypervisor-v44 to generate runtime image..."
         cloud-hypervisor-v44 \
             --kernel $HOME/vmlinuz \
             --initramfs $HOME/initrd.gz \
@@ -513,15 +472,11 @@ eza -l ${OUTPUT_PATH}
             --memory "size=${MEMORY_SIZE}" \
             --net fd=3,mac="${mac_address}" 3<>"${tap_device}" \
             --serial tty \
-            --console off
-
-#            --serial socket=$HOME/serial.sock
-#            --serial socket=$HOME/serial.sock
-#            --console k,socket=$HOME/serial.tty \
-#            --serial socket=$HOME/serial.sock
-#            --console off --serial tty=/dev/ttyS0 --serial tty=/dev/ttyS1
-#            --console tty \
-#            --serial tty
+            --console off || {
+                echo "ERROR: cloud-hypervisor-v44 failed to complete runtime image generation"
+                cleanup_network
+                exit 1
+            }
         
         echo "Runtime image generation completed."
     else
