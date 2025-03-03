@@ -6,7 +6,7 @@ This document describes how to create a Debian-based runtime image for use with 
 
 Before using the image generation tool, ensure you have the following dependencies installed:
 
-- cloud-hypervisor-v44 - For running the generation process
+- cloud-hypervisor-v44 - For running the generation process (industry standard virtualization tool)
 - dosfstools - For creating the FAT filesystem (provides mkdosfs at /usr/sbin/mkdosfs)
 - mtools - For manipulating the FAT filesystem (provides mcopy at /usr/bin/mcopy)
 - coreutils - For creating the disk image (provides truncate)
@@ -24,7 +24,7 @@ sudo apt install dosfstools mtools coreutils curl iproute2 iptables
 
 ## Usage
 
-The `generate-debian-image.sh` script creates a VLLMD Hypervisor runtime image with the following steps:
+The `generate-runtime-image.sh` script creates a VLLMD Hypervisor runtime image with the following steps:
 
 1. Downloads the Debian netinst ISO to a cache location
 2. Creates a preseed configuration disk with timestamp
@@ -35,7 +35,7 @@ The `generate-debian-image.sh` script creates a VLLMD Hypervisor runtime image w
 ### Basic Usage
 
 ```bash
-bash generate-debian-image.sh
+bash generate-runtime-image.sh
 ```
 
 This will create a Debian Bookworm-based runtime image with default settings.
@@ -45,7 +45,7 @@ This will create a Debian Bookworm-based runtime image with default settings.
 The script supports several options to customize the image generation process:
 
 ```bash
-bash generate-debian-image.sh [OPTIONS]
+bash generate-runtime-image.sh [OPTIONS]
 ```
 
 Options:
@@ -131,10 +131,10 @@ Example:
 
 ```bash
 # Generate the image
-bash generate-debian-image.sh --output=$HOME/.local/share/vllmd/vllmd-hypervisor/images/vllmd-hypervisor-runtime.raw
+bash generate-runtime-image.sh --output=$HOME/.local/share/vllmd/vllmd-hypervisor/vllmd-hypervisor-runtime.raw
 
 # Use the image in the VLLMD Hypervisor configuration
-VLLMD_HYPERVISOR_SOURCE_REFERENCE_RAW_FILEPATH="$HOME/.local/share/vllmd/vllmd-hypervisor/images/vllmd-hypervisor-runtime.raw"
+VLLMD_HYPERVISOR_SOURCE_REFERENCE_RAW_FILEPATH="$HOME/.local/share/vllmd/vllmd-hypervisor/vllmd-hypervisor-runtime.raw"
 
 # Initialize VLLMD Hypervisor with the new image
 bash initialize-vllmd-hypervisor.sh
@@ -189,7 +189,7 @@ The script generates and uses the following resources:
 1. **Directories**:
    - Timestamp-based state directory (`$HOME/.local/state/vllmd/vllmd-hypervisor/$TIMESTAMP-build`)
    - Cache directory for ISO (`$HOME/.cache/vllmd/vllmd-hypervisor`)
-   - Image storage directory (`$HOME/.local/share/vllmd/vllmd-hypervisor/images`)
+   - Share directory (`$HOME/.local/share/vllmd/vllmd-hypervisor`)
 
 2. **Files**:
    - Cached Debian netinst ISO (`$HOME/.cache/vllmd/vllmd-hypervisor/debian-netinst.iso`)

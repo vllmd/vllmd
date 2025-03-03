@@ -1,30 +1,30 @@
 
 #!/usr/bin/env bash
 #
-# generate-debian-image.sh - Create a Debian VM image using preseed configuration
+# generate-runtime-image.sh - Create a runtime image for VLLMD Hypervisor
 #
-# This script generates a Debian VM image by downloading a Debian netboot installer,
-# creating a preseed configuration disk, and using cloud-hypervisor-v44 to install Debian
-# with the preseed configuration. The resulting image can be used with VLLMD Hypervisor.
+# This script generates a Debian-based runtime image by downloading a Debian netinst ISO,
+# creating a preseed configuration disk, and using cloud-hypervisor-v44 to generate a 
+# runtime image with the preseed configuration. The resulting image can be used with VLLMD Hypervisor.
 #
 # Usage:
-#   bash generate-debian-image.sh [OPTIONS]
+#   bash generate-runtime-image.sh [OPTIONS]
 #
 # Options:
 #   --dry-run              Show what would be done without making any changes
 #   --force                Force overwrite of existing files
-#   --state-dir=PATH       Set custom state directory (default: $HOME/.local/state/vllmd-hypervisor)
-#   --output=PATH          Set custom output path for the VM image
-#   --memory=SIZE          Memory size for installation VM in GiB (default: 16GiB)
+#   --state-dir=PATH       Set custom state directory (default: $HOME/.local/state/vllmd/vllmd-hypervisor)
+#   --output=PATH          Set custom output path for the runtime image
+#   --memory=SIZE          Memory size for generation process in GiB (default: 16GiB)
 #   --disk-size=SIZE       Size of the output disk image in GiB (default: 20GiB)
-#   --debian-version=VER   Debian version to install (default: bookworm)
+#   --debian-version=VER   Debian version to use (default: bookworm)
 #   --preseed=PATH         Path to custom preseed file (default: use built-in preseed-v1-bookworm.cfg)
 #
 # Examples:
-#   bash generate-debian-image.sh
-#   bash generate-debian-image.sh --dry-run
-#   bash generate-debian-image.sh --force --memory=32GiB --disk-size=40GiB
-#   bash generate-debian-image.sh --preseed=/path/to/custom-preseed.cfg
+#   bash generate-runtime-image.sh
+#   bash generate-runtime-image.sh --dry-run
+#   bash generate-runtime-image.sh --force --memory=32GiB --disk-size=40GiB
+#   bash generate-runtime-image.sh --preseed=/path/to/custom-preseed.cfg
 #
 
 set -euo pipefail
@@ -90,8 +90,8 @@ done
 # Get timestamp for file naming
 TIMESTAMP=$(date "+%Y%m%d-%W-%H%M%S")
 
-# Set up shared directory for images
-SHARE_DIR="${HOME}/.local/share/vllmd/vllmd-hypervisor/images"
+# Set up shared directory
+SHARE_DIR="${HOME}/.local/share/vllmd/vllmd-hypervisor"
 mkdir -p "${SHARE_DIR}" 2>/dev/null || true
 
 # Set default OUTPUT_PATH if not specified
