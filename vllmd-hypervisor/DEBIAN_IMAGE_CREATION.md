@@ -1,33 +1,36 @@
 # Debian VM Image Creation for VLLMD Hypervisor
 
-This document describes how to create a Debian VM image for use with VLLMD Hypervisor. The image is generated using a preseed configuration and cloud-hypervisor, resulting in a fully automated installation process.
+This document describes how to create a Debian VM image for use with VLLMD Hypervisor. The image is generated using a preseed configuration and cloud-hypervisor-v44, resulting in a fully automated installation process.
 
 ## Prerequisites
 
 Before using the image generation tool, ensure you have the following dependencies installed:
 
-- cloud-hypervisor - For running the VM during installation
-- dosfstools - For creating the FAT filesystem (provides mkdosfs)
-- mtools - For manipulating the FAT filesystem (provides mcopy)
+- cloud-hypervisor-v44 - For running the VM during installation
+- dosfstools - For creating the FAT filesystem (provides mkdosfs at /usr/sbin/mkdosfs)
+- mtools - For manipulating the FAT filesystem (provides mcopy at /usr/bin/mcopy)
 - coreutils - For creating the disk image (provides truncate)
-- wget - For downloading the Debian installer files
+- curl - For downloading the Debian installer files (/usr/bin/curl)
+- iproute2 - For network configuration (provides ip command at /usr/sbin/ip or /sbin/ip)
+- iptables - For network forwarding rules
 
 You can install these dependencies on a Debian-based system with:
 
 ```bash
 sudo apt update
-sudo apt install dosfstools mtools coreutils wget
-# Install cloud-hypervisor from your preferred source
+sudo apt install dosfstools mtools coreutils curl iproute2 iptables
+# Install cloud-hypervisor-v44 from your preferred source
 ```
 
 ## Usage
 
 The `generate-debian-image.sh` script creates a Debian VM image with the following steps:
 
-1. Downloads the Debian netboot installer
-2. Creates a preseed configuration disk
+1. Downloads the Debian netinst ISO to a cache location
+2. Creates a preseed configuration disk with timestamp
 3. Creates a raw disk image
-4. Runs cloud-hypervisor to install Debian using the preseed configuration
+4. Sets up macvtap networking for VM connectivity
+5. Runs cloud-hypervisor-v44 to install Debian using the preseed configuration
 
 ### Basic Usage
 
@@ -48,33 +51,73 @@ bash generate-debian-image.sh [OPTIONS]
 Options:
 - `--dry-run`: Show what would be done without making any changes
 - `--force`: Force overwrite of existing files
-- `--state-dir=PATH`: Set custom state directory (default: $HOME/.local/state/vllmd-hypervisor)
+- `--state-dir=PATH`: Set custom state directory (default: $HOME/.local/state/vllmd/vllmd-hypervisor)
 - `--output=PATH`: Set custom output path for the VM image
-- `--memory=SIZE`: Memory size for installation VM (default: 4G)
+- `--memory=SIZE`: Memory size for installation VM (default: 16G)
 - `--disk-size=SIZE`: Size of the output disk image (default: 20G)
 - `--debian-version=VER`: Debian version to install (default: bookworm)
-- `--preseed=PATH`: Path to custom preseed file (default: use built-in bookworm-preseed-v1.cfg)
-
-Example with custom options:
-
-```bash
-bash generate-debian-image.sh --force --memory=8G --disk-size=40G --output=/path/to/custom-debian.raw
-```
+- `--preseed=PATH`: Path to custom preseed file (default: use built-in preseed-v1-bookworm.cfg)
 
 ## Preseed Configuration
 
-The script uses a predefined preseed configuration file (`bookworm-preseed-v1.cfg`) that sets up:
+The script uses a predefined preseed configuration file (`preseed-v1-bookworm.cfg`) with these settings:
 
-- US English locale and keyboard
-- Network configuration with DHCP
-- Hostname: bookworm_baseline
-- Domain: artificialwisdom.cloud
-- User account setup (non-root)
-- XFS filesystem
-- GPT partition table
-- Required packages for cloud environments
+- **SSH Configuration**:
+  - Permits root login via SSH
+  - Enables password authentication for SSH
 
-You can provide your own preseed file with the `--preseed` option if you need custom settings.
+- **Localization**:
+  - US English locale
+  - US keyboard layout
+
+- **Network**:
+  - Automatic interface selection
+  - Hostname: vllmd-hypervisor-runtime
+  - Domain: vllmd.com
+  - DHCP enabled for network configuration
+  - NTP service enabled
+  - Uses systemd-networkd for network management
+  - Configures all ethernet interfaces (en*) for DHCP
+
+- **Package Mirrors**:
+  - HTTP protocol
+  - Uses http.us.debian.org mirror
+  - Enables security and update repositories
+
+- **Account Setup**:
+  - Disables root login
+  - Sets up a user with full name "Steven Dake <steve@vllmd.com>"
+  - Creates a default password
+  - Adds user to sudo group
+
+- **Time Settings**:
+  - UTC timezone
+  - NTP enabled for time synchronization
+
+- **Partitioning**:
+  - XFS filesystem
+  - Regular partitioning method
+  - Atomic recipe (single partition)
+  - GPT partition table
+  - Uses /dev/vdc as installation target during installation
+  - Will be /dev/sda when running in the hypervisor
+
+- **Boot Configuration**:
+  - GRUB2 bootloader
+  - Serial console enabled (tty1 and ttyS0,115200)
+
+- **Packages**:
+  - Standard system utilities
+  - SSH server
+  - Cloud-init, sudo, curl, open-iscsi, libopeniscsiusr, openssh-server, neovim, ssh-import-id
+  - Full system upgrade during installation
+
+- **Post-installation**:
+  - Configures GRUB for serial console access
+  - Sets up sudo access for the user
+  - Removes traditional network interfaces file
+  - Configures systemd-networkd for network management
+  - Enables and starts systemd-networkd
 
 ## Integration with VLLMD Hypervisor
 
@@ -88,10 +131,10 @@ Example:
 
 ```bash
 # Generate the image
-bash generate-debian-image.sh --output=/var/lib/vllmd/images/debian-bookworm.raw
+bash generate-debian-image.sh --output=$HOME/.local/share/vllmd/vllmd-hypervisor/images/vllmd-hypervisor-runtime.raw
 
 # Use the image in the VLLMD Hypervisor configuration
-VLLMD_HYPERVISOR_SOURCE_REFERENCE_RAW_FILEPATH="/var/lib/vllmd/images/debian-bookworm.raw"
+VLLMD_HYPERVISOR_SOURCE_REFERENCE_RAW_FILEPATH="$HOME/.local/share/vllmd/vllmd-hypervisor/images/vllmd-hypervisor-runtime.raw"
 
 # Initialize VLLMD Hypervisor with the new image
 bash initialize-vllmd-hypervisor.sh
@@ -103,47 +146,81 @@ The script performs the following steps to create the VM image:
 
 1. **Preparation**:
    - Validates prerequisites
-   - Creates necessary directories
+   - Creates necessary directories with timestamp-based naming
    - Sets up configuration
 
 2. **Downloading the Installer**:
-   - Retrieves the Debian netboot kernel and initrd from the Debian mirror
+   - Retrieves the Debian netinst ISO (debian-12.9.0-amd64-netinst.iso)
+   - Stores the ISO in a cache directory for reuse
+   - Reuses existing ISO if found to save bandwidth
 
 3. **Creating the Preseed Disk**:
-   - Creates a FAT-formatted disk image
+   - Creates a FAT-formatted disk image with volume label "VLLM_PRES"
+   - Uses a timestamp in the preseed disk filename for uniqueness
    - Adds the preseed configuration file to this image
+   - Verifies that the preseed file is correctly written
 
-4. **Creating the Disk Image**:
+4. **Network Configuration**:
+   - Sets up macvtap networking on the host's default network interface
+   - Creates a macvtap device with MAC address "52:54:00:12:34:56"
+   - Configures file permissions for the tap device
+
+5. **Creating the Disk Image**:
    - Creates an empty raw disk image of the specified size using truncate
+   - Names the file with a timestamp for easier management
 
-5. **Running the Installation**:
-   - Launches cloud-hypervisor with:
-     - The downloaded kernel and initrd
+6. **Running the Installation**:
+   - Launches cloud-hypervisor-v44 with:
+     - The downloaded netinst ISO
      - The preseed configuration disk as a secondary disk
      - The target disk image
-     - The appropriate kernel command line options
+     - 4 CPUs for the installation VM
+     - Properly configured serial console
+     - Macvtap networking for internet connectivity
 
-6. **Completion**:
-   - When the installation finishes, the disk image is ready for use with VLLMD Hypervisor
+7. **Cleanup**:
+   - Automatically removes the macvtap device after installation
+   - Cleans up temporary files (preserves cached ISO)
 
-## Customization
+## Generated Resources and Binaries
 
-### Custom Preseed File
+The script generates and uses the following resources:
 
-To use a custom preseed file, create your own based on the provided template and pass it with the `--preseed` option:
+1. **Directories**:
+   - Timestamp-based state directory (`$HOME/.local/state/vllmd/vllmd-hypervisor/$TIMESTAMP-build`)
+   - Cache directory for ISO (`$HOME/.cache/vllmd/vllmd-hypervisor`)
+   - Image storage directory (`$HOME/.local/share/vllmd/vllmd-hypervisor/images`)
 
-```bash
-bash generate-debian-image.sh --preseed=/path/to/my-preseed.cfg
-```
+2. **Files**:
+   - Cached Debian netinst ISO (`$HOME/.cache/vllmd/vllmd-hypervisor/debian-netinst.iso`)
+   - Generated preseed disk image (`$BUILD_DIR/$TIMESTAMP-preseed.img`)
+   - VM disk image (`$STATE_DIR/$TIMESTAMP-vllmd-hypervisor-runtime.raw` or custom path with `--output`)
 
-### Important Preseed Settings
+3. **Network Resources**:
+   - Temporary macvtap device (macvtap0)
+   - Tap device file (/dev/tap*)
 
-When customizing the preseed file, pay attention to these important settings:
+4. **Installed Debian VM Components**:
+   - XFS-formatted filesystem on a GPT partition table
+   - GRUB2 bootloader configured for serial console
+   - User with sudo access
+   - Systemd-networkd configuration for network interfaces
+   - Required packages for VM operation
 
-- **Partitioning**: The default uses XFS filesystem (`d-i partman/default_filesystem string xfs`)
-- **Package Selection**: The default includes cloud-init, openssh-server, and other utilities
-- **Network Configuration**: Configured for DHCP by default
-- **Late Commands**: These run at the end of installation to perform final system configurations
+5. **Binaries Used**:
+   - `cloud-hypervisor-v44` - For running the VM
+   - `/usr/sbin/mkdosfs` - For creating the FAT filesystem
+   - `/usr/bin/mcopy` - For copying files to the FAT filesystem
+   - `/usr/bin/mdir` - For verifying files on the FAT filesystem
+   - `truncate` - For creating the disk image
+   - `/usr/bin/curl` - For downloading the Debian ISO
+   - `/usr/sbin/ip` or `/sbin/ip` - For network configuration
+   - `sudo` - For operations requiring elevated privileges
+   - `rm` - For removing files
+   - `mkdir` - For creating directories
+   - `find` - For finding existing files
+   - `cat` - For reading system information
+   - `chmod` - For changing file permissions
 
 ## Troubleshooting
 
@@ -151,26 +228,24 @@ When customizing the preseed file, pay attention to these important settings:
 
 If the installation fails, try:
 
-1. Increasing the memory with `--memory=8G`
-2. Running with `--dry-run` to verify configurations
-3. Checking the preseed file for syntax errors
-4. Ensuring network connectivity for downloading packages
+1. Running with `--dry-run` to verify configurations
+2. Checking if macvtap devices are already in use (they will be removed and recreated)
+3. Ensuring network connectivity for downloading packages
+4. Verifying that the default network interface is properly detected
+
+### Network Issues
+
+If you encounter network issues during installation:
+
+1. Make sure your host has a valid internet connection
+2. Check that your default network interface is properly detected
+3. Ensure you have proper permissions to create macvtap devices (may require sudo)
+4. Verify that the tap device permissions are set correctly (the script uses chmod 666)
 
 ### Cloud-Hypervisor Issues
 
-If you encounter issues with cloud-hypervisor:
+If you encounter issues with cloud-hypervisor-v44:
 
-1. Verify that cloud-hypervisor is installed and accessible
-2. Check that you're using a compatible version of cloud-hypervisor
-3. Review the cloud-hypervisor logs for errors
-
-## Security Considerations
-
-The default preseed configuration:
-
-- Disables root login
-- Sets up a user account with sudo access
-- Installs SSH server
-- Applies security updates automatically
-
-For production environments, consider customizing the preseed file to enhance security according to your requirements.
+1. Verify that cloud-hypervisor-v44 is installed and accessible
+2. Check that you're using version 44 specifically, as the script is optimized for this version
+3. Review installation logs for errors
