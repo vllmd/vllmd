@@ -8,6 +8,10 @@ DRY_RUN=0
 CONFIG_PATH="$HOME/.config/vllmd/vllmd-hypervisor-runtime-defaults.toml"
 SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 
+# GPU Blocklist - GPUs in this list will not be assigned to runtimes
+# Format is a space-separated list of PCI addresses (e.g. "0000:61:00.0 0000:62:00.0")
+GPU_BLOCKLIST="0000:61:00.0"
+
 # Process command line arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -161,14 +165,15 @@ fi
 pre_start_service_content="[Unit]
 Description=VLLMD Pre-start setup for runtime %i
 Before=vllmd-runtime@%i.service
-Slice=vllmd.slice
 
 [Service]
+Slice=vllmd.slice
 Type=oneshot
 RemainAfterExit=yes
 EnvironmentFile=%h/.config/vllmd/runtime-%i.env
 ExecStart=/bin/sh -c 'echo \"Configuring runtime %i environment\"'
-# Add pre-start commands here (network setup, etc.)
+# Skip network configuration for now since it requires root privileges
+# We'll handle this in a different way later
 
 [Install]
 WantedBy=default.target"
@@ -177,17 +182,40 @@ main_service_content="[Unit]
 Description=VLLMD Runtime %i
 Requires=vllmd-runtime-pre-start@%i.service
 After=vllmd-runtime-pre-start@%i.service
-Slice=vllmd.slice
 
 [Service]
+Slice=vllmd.slice
 Type=simple
+Environment=VLLMD_RUNTIME_PATH=%h/.local/run/vllmd/%i
+Environment=VLLMD_RUNTIME_LOG_FILEPATH=%h/.local/log/vllmd/%i.log
 EnvironmentFile=%h/.config/vllmd/runtime-%i.env
-ExecStart=/bin/sh -c 'echo \"Starting VLLMD runtime %i\"'
-# Add runtime start command here
-ExecStop=/bin/sh -c 'echo \"Stopping VLLMD runtime %i\"'
-# Add runtime stop command here
+
+ExecStartPre=/bin/sh -c 'mkdir --parents \"\${VLLMD_RUNTIME_PATH}\"'
+ExecStart=cloud-hypervisor \\
+    --api-socket \"\${VLLMD_RUNTIME_PATH}/api.sock\" \\
+    --kernel \"\${VLLMD_RUNTIME_KERNEL_FILEPATH}\" \\
+    --disk path=\"\${VLLMD_RUNTIME_DISK_FILEPATH}\" \\
+          path=\"\${VLLMD_RUNTIME_CLOUDINIT_DISK}\",readonly=on \\
+    --cpus boot=\"\${VLLMD_RUNTIME_CPUS}\" \\
+    --memory \"\${VLLMD_RUNTIME_MEMORY}\" \\
+    --serial tty \\
+    --console off \\
+    --log-file \"\${VLLMD_RUNTIME_LOG_FILEPATH}\" \\
+    --cmdline \"\${VLLMD_RUNTIME_CMDLINE}\"
+
+ExecStop=/bin/sh -c 'if [ -S \"\${VLLMD_RUNTIME_PATH}/api.sock\" ]; then \\
+    curl --unix-socket \"\${VLLMD_RUNTIME_PATH}/api.sock\" \\
+      -X PUT \"http://localhost/api/v1/vm.shutdown\"; \\
+    timeout 30 bash -c \"while [ -S \\\"\${VLLMD_RUNTIME_PATH}/api.sock\\\" ]; do \\
+        sleep 1; \\
+    done\"; \\
+fi'
+ExecStopPost=/bin/sh -c 'rm -rf \"\${VLLMD_RUNTIME_PATH}\"'
+
 Restart=on-failure
 RestartSec=5
+TimeoutStartSec=300
+TimeoutStopSec=30
 
 [Install]
 WantedBy=default.target"
@@ -199,50 +227,67 @@ safe_write_file "$SYSTEMD_USER_DIR/vllmd-runtime@.service" "$main_service_conten
 # Process runtime configurations
 if [[ "$DRY_RUN" -eq 1 ]]; then
     # In dry-run mode, parse JSON and show what would be created
-    echo "$CONFIG_JSON" | python3 -c "
+    python3 <<EOF
 import sys
 import json
 import os
 
-config = json.load(sys.stdin)
+config = json.loads('''$CONFIG_JSON''')
 dry_run_prefix = '[DRY RUN] '
 
 if 'runtimes' not in config:
     print(f'{dry_run_prefix}Error: No runtimes defined in configuration')
     sys.exit(1)
 
-print(f'{dry_run_prefix}Found {len(config['runtimes'])} runtime(s) in configuration')
+print(f'{dry_run_prefix}Found {len(config["runtimes"])} runtime(s) in configuration')
 
 # Process each runtime
-for runtime in config['runtimes']:
-    if 'index' not in runtime or 'name' not in runtime:
+for runtime in config["runtimes"]:
+    if "index" not in runtime or "name" not in runtime:
         print(f'{dry_run_prefix}Warning: Skipping runtime without index or name')
         continue
         
-    index = runtime['index']
-    name = runtime['name']
+    index = runtime["index"]
+    name = runtime["name"]
     
     # Show environment file that would be created
-    env_path = os.path.expandvars(f'\$HOME/.config/vllmd/runtime-{index}.env')
+    env_path = os.path.expandvars(f'$HOME/.config/vllmd/runtime-{index}.env')
     
     print(f'{dry_run_prefix}Would create environment file: {env_path}')
     print(f'{dry_run_prefix}Content would be:')
     print(f'{dry_run_prefix}----------------------------------------')
     print(f'{dry_run_prefix}# VLLMD Runtime {index} Environment')
+    print(f'{dry_run_prefix}VLLMD_RUNTIME_ID={index}')
     print(f'{dry_run_prefix}VLLMD_RUNTIME_NAME={name}')
     
     # Add GPUs
-    if 'gpus' in runtime and isinstance(runtime['gpus'], list):
-        gpus_str = ','.join(runtime['gpus'])
-        print(f'{dry_run_prefix}VLLMD_RUNTIME_GPUS={gpus_str}')
+    if "gpus" in runtime and isinstance(runtime["gpus"], list):
+        gpus_str = ','.join(runtime["gpus"])
+        if len(runtime["gpus"]) > 0:
+            # Read GPU blocklist from environment variable
+            gpu_device = runtime["gpus"][0]
+            gpu_blocklist = os.environ.get("GPU_BLOCKLIST", "").split()
+            if gpu_device in gpu_blocklist:
+                print(f'{dry_run_prefix}# GPU {gpu_device} is blocklisted, skipping assignment')
+                print(f'{dry_run_prefix}# VLLMD_RUNTIME_GPU_DEVICE={gpu_device} - BLOCKLISTED')
+            else:
+                print(f'{dry_run_prefix}VLLMD_RUNTIME_GPU_DEVICE={gpu_device}')
         
     # Add memory
-    if 'memory_gb' in runtime:
-        print(f'{dry_run_prefix}VLLMD_RUNTIME_MEMORY={runtime['memory_gb']}G')
+    if "memory_gb" in runtime:
+        memory_gb = runtime["memory_gb"]
+        print(f'{dry_run_prefix}VLLMD_RUNTIME_MEMORY=size={memory_gb}G,hugepages=on,hugepage_size=2M,shared=on')
         
     # Add CPUs
-    if 'cpus' in runtime:
-        print(f'{dry_run_prefix}VLLMD_RUNTIME_CPUS={runtime['cpus']}')
+    if "cpus" in runtime:
+        print(f'{dry_run_prefix}VLLMD_RUNTIME_CPUS={runtime["cpus"]}')
+        
+    # Add required network and path configurations
+    print(f'{dry_run_prefix}VLLMD_RUNTIME_HOST_NET=eno1')
+    print(f'{dry_run_prefix}VLLMD_RUNTIME_CMDLINE="root=/dev/vda1 rw console=ttyS0 hugepagesz=2M hugepages=32768 default_hugepagesz=2M intel_iommu=on iommu=pt"')
+    print(f'{dry_run_prefix}VLLMD_RUNTIME_KERNEL_FILEPATH="/mnt/aw/hypervisor-fw"')
+    print(f'{dry_run_prefix}VLLMD_RUNTIME_CLOUDINIT_DISK="/mnt/aw/cloudinit-boot-disk.raw"')
+    print(f'{dry_run_prefix}VLLMD_RUNTIME_DISK_FILEPATH="/mnt/aw/images/runtime-{index}/disk.raw"')
     
     print(f'{dry_run_prefix}----------------------------------------')
     
@@ -250,15 +295,15 @@ for runtime in config['runtimes']:
     print(f'{dry_run_prefix}Would enable systemd services:')
     print(f'{dry_run_prefix}  - vllmd-runtime-pre-start@{index}.service')
     print(f'{dry_run_prefix}  - vllmd-runtime@{index}.service')
-"
+EOF
 else
     # Normal mode - actually create the files
-    echo "$CONFIG_JSON" | python3 -c '
+    python3 <<EOF
 import sys
 import json
 import os
 
-config = json.load(sys.stdin)
+config = json.loads('''$CONFIG_JSON''')
 
 if "runtimes" not in config:
     print("Error: No runtimes defined in configuration")
@@ -281,23 +326,33 @@ for runtime in config["runtimes"]:
     
     with open(env_path, "w") as f:
         f.write(f"# VLLMD Runtime {index} Environment\n")
+        f.write(f"VLLMD_RUNTIME_ID={index}\n")
         f.write(f"VLLMD_RUNTIME_NAME={name}\n")
         
         # Add GPUs
         if "gpus" in runtime and isinstance(runtime["gpus"], list):
-            gpus_str = ",".join(runtime["gpus"])
-            f.write(f"VLLMD_RUNTIME_GPUS={gpus_str}\n")
+            if len(runtime["gpus"]) > 0:
+                f.write(f"VLLMD_RUNTIME_GPU_DEVICE={runtime['gpus'][0]}\n")
             
         # Add memory
         if "memory_gb" in runtime:
-            f.write(f"VLLMD_RUNTIME_MEMORY={runtime['memory_gb']}G\n")
+            memory_gb = runtime["memory_gb"]
+            f.write(f"VLLMD_RUNTIME_MEMORY=size={memory_gb}G,hugepages=on,hugepage_size=2M,shared=on\n")
             
         # Add CPUs
         if "cpus" in runtime:
-            f.write(f"VLLMD_RUNTIME_CPUS={runtime['cpus']}\n")
+            cpus = runtime["cpus"]
+            f.write(f"VLLMD_RUNTIME_CPUS={cpus}\n")
+            
+        # Add required network and path configurations
+        f.write(f"VLLMD_RUNTIME_HOST_NET=eno1\n")
+        f.write(f"VLLMD_RUNTIME_CMDLINE=root=/dev/vda1 rw console=ttyS0 hugepagesz=2M hugepages=32768 default_hugepagesz=2M intel_iommu=on iommu=pt\n")
+        f.write(f"VLLMD_RUNTIME_KERNEL_FILEPATH=/mnt/aw/hypervisor-fw\n")
+        f.write(f"VLLMD_RUNTIME_CLOUDINIT_DISK=/mnt/aw/cloudinit-boot-disk.raw\n")
+        f.write(f"VLLMD_RUNTIME_DISK_FILEPATH=/mnt/aw/images/runtime-{index}/disk.raw\n")
     
     print(f"Created environment file for runtime-{index}")
-'
+EOF
 fi
 
 # Reload systemd user daemon
@@ -315,12 +370,13 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
     :
 else
     # Normal mode - actually enable the services
-    echo "$CONFIG_JSON" | python3 -c '
+    python3 <<EOF
 import sys
 import json
 import subprocess
+import os
 
-config = json.load(sys.stdin)
+config = json.loads('''$CONFIG_JSON''')
 
 if "runtimes" not in config:
     print("Error: No runtimes defined in configuration")
@@ -342,7 +398,7 @@ for runtime in config["runtimes"]:
     subprocess.run(main_cmd, check=True)
     
     print(f"Enabled services for runtime-{index}")
-'
+EOF
 fi
 
 # Final output

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# initialzie-vllmd-hypervisor.sh - Proof-of-concept script for setting up VLLMD hypervisor
+# initialize-vllmd-hypervisor.sh - Proof-of-concept script for setting up VLLMD hypervisor
 #
 # This script implements the core functionality for deploying cloud-hypervisor
 # VMs optimized for inference workloads.
@@ -17,18 +17,20 @@
 #   --yes                      Automatically use defaults without prompting
 #   --no-reboot                Skip reboot requests and continue script execution
 #   --destructive-image-replace Allow overwriting existing disk images
-#   --image-prefix=PATH        Set custom path for VM images (default: /mnt/aw)
-#   --source-raw-image=PATH    Path to source raw image file (default: /mnt/aw/base.raw)
-#   --hypervisor-fw=PATH       Path to hypervisor firmware (default: /mnt/aw/hypervisor-fw)
-#   --cloudinit-disk=PATH      Path to cloud-init disk image (default: /mnt/aw/cloudinit-boot-disk.raw)
+#   --image-prefix=PATH        Set custom path for VM images (default: $HOME/.local/share/vllmd)
+#   --source-raw-image=PATH    Path to source raw image file (default: $HOME/.local/share/vllmd/vllmd-hypervisor-runtime.raw)
+#   --hypervisor-fw=PATH       Path to hypervisor firmware (default: $HOME/.local/share/vllmd/hypervisor-fw)
+#   --config-image=PATH       Path to VM configuration disk image (default: $HOME/.local/share/vllmd/config-image.raw)
+#   --gpu-blocklist=LIST       Comma-separated list of GPU addresses to exclude (e.g., "0000:01:00.0,0000:02:00.0")
 #   --help                     Display this help message
 #
 # Example:
-#   bash initialzie-vllmd-hypervisor.sh --dry-run
-#   bash initialzie-vllmd-hypervisor.sh --yes
-#   bash initialzie-vllmd-hypervisor.sh --no-reboot
-#   bash initialzie-vllmd-hypervisor.sh --destructive-image-replace
-#   bash initialzie-vllmd-hypervisor.sh --image-prefix=/mnt/aw --source-raw-image=/mnt/aw/base.raw --hypervisor-fw=/mnt/aw/hypervisor-fw
+#   bash initialize-vllmd-hypervisor.sh --dry-run
+#   bash initialize-vllmd-hypervisor.sh --yes
+#   bash initialize-vllmd-hypervisor.sh --no-reboot
+#   bash initialize-vllmd-hypervisor.sh --destructive-image-replace
+#   bash initialize-vllmd-hypervisor.sh --gpu-blocklist="0000:61:00.0,0000:a1:00.0"
+#   bash initialize-vllmd-hypervisor.sh --image-prefix=/custom/path --source-raw-image=/custom/path/runtime.raw --hypervisor-fw=/custom/path/hypervisor-fw
 
 set -euo pipefail
 
@@ -38,16 +40,93 @@ AUTO_YES=0
 NO_REBOOT=0
 DESTRUCTIVE_IMAGE_REPLACE=0
 STEP_NUMBER=0
-VLLMD_KVM_IMAGE_PATH_PREFIX="/mnt/aw"
-VLLMD_KVM_SOURCE_RAW_FILEPATH="/mnt/aw/base.raw"
-VLLMD_KVM_HYPERVISOR_FW_FILEPATH="/mnt/aw/hypervisor-fw"
-VLLMD_KVM_CLOUDINIT_FILEPATH="/mnt/aw/cloudinit-boot-disk.raw"
+VLLMD_RUNTIME_IMAGE_PREFIX_PATH="${HOME}/.local/share/vllmd"
+VLLMD_RUNTIME_SOURCE_RAW_FILEPATH="${HOME}/.local/share/vllmd/vllmd-hypervisor-runtime.raw"
+VLLMD_RUNTIME_HYPERVISOR_FW_FILEPATH="${HOME}/.local/share/vllmd/hypervisor-fw"
+VLLMD_RUNTIME_CONFIG_IMAGE_FILEPATH="${HOME}/.local/share/vllmd/config-image.raw"
+VLLMD_RUNTIME_CONFIG_FILE="${HOME}/.config/vllmd/vllmd-hypervisor-runtime-defaults.toml"
+GPU_BLOCKLIST=""
 
 # Created files tracking
 CREATED_FILES=()
 
 function print_help() {
     sed -n 's/^# //p' "$0" | sed -n '/^Usage:/,/^$/p'
+}
+
+# Helper functions for logging
+log() {
+    local level="$1"
+    local message="$2"
+    echo "[${level}] ${message}"
+}
+
+log_info() {
+    log "INFO" "$1"
+}
+
+log_warn() {
+    log "WARNING" "$1" >&2
+}
+
+log_error() {
+    log "ERROR" "$1" >&2
+}
+
+# Function to read GPU blocklist from the config file
+read_gpu_blocklist_from_config() {
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        echo "Would check for GPU blocklist in configuration file"
+        return
+    fi
+    
+    if [[ -f "${VLLMD_RUNTIME_CONFIG_FILE}" ]]; then
+        log_info "Reading configuration from ${VLLMD_RUNTIME_CONFIG_FILE}"
+        
+        # Try to extract gpu_blocklist value using grep and sed
+        local config_blocklist
+        config_blocklist=$(grep -A 5 "gpu_blocklist" "${VLLMD_RUNTIME_CONFIG_FILE}" | grep -o '".*"' | sed 's/"//g' || echo "")
+        
+        if [[ -n "${config_blocklist}" ]]; then
+            log_info "Found GPU blocklist in configuration file: ${config_blocklist}"
+            if [[ -z "${GPU_BLOCKLIST}" ]]; then
+                GPU_BLOCKLIST="${config_blocklist}"
+                log_info "Using GPU blocklist from configuration file"
+            else
+                log_info "Command-line GPU blocklist takes precedence over configuration file"
+            fi
+        fi
+    fi
+}
+
+# Function to update GPU blocklist in the config file
+update_gpu_blocklist_in_config() {
+    if [[ -n "${GPU_BLOCKLIST}" ]]; then
+        if [[ "${DRY_RUN}" -eq 1 ]]; then
+            echo "Would update GPU blocklist in configuration file: ${GPU_BLOCKLIST}"
+            return 0
+        fi
+        
+        if [[ ! -f "${VLLMD_RUNTIME_CONFIG_FILE}" ]]; then
+            log_info "Configuration file does not exist, creating it first"
+            mkdir -p "$(dirname "${VLLMD_RUNTIME_CONFIG_FILE}")"
+            echo "# VLLMD Hypervisor Runtime Default Configuration" > "${VLLMD_RUNTIME_CONFIG_FILE}"
+        fi
+        
+        if grep -q "gpu_blocklist" "${VLLMD_RUNTIME_CONFIG_FILE}"; then
+            # Config file exists and has gpu_blocklist entry, update it
+            log_info "Updating GPU blocklist in configuration file"
+            sed -i "s|gpu_blocklist = .*|gpu_blocklist = \"${GPU_BLOCKLIST}\"|" "${VLLMD_RUNTIME_CONFIG_FILE}"
+        elif grep -q "\[gpu\]" "${VLLMD_RUNTIME_CONFIG_FILE}"; then
+            # Config file exists and has [gpu] section but no gpu_blocklist entry, add it
+            log_info "Adding GPU blocklist to existing [gpu] section"
+            sed -i "/\[gpu\]/a gpu_blocklist = \"${GPU_BLOCKLIST}\"" "${VLLMD_RUNTIME_CONFIG_FILE}"
+        else
+            # Config file exists but doesn't have [gpu] section, add it
+            log_info "Adding [gpu] section with GPU blocklist"
+            echo -e "\n[gpu]\ngpu_blocklist = \"${GPU_BLOCKLIST}\"" >> "${VLLMD_RUNTIME_CONFIG_FILE}"
+        fi
+    fi
 }
 
 # Process command line arguments
@@ -70,19 +149,23 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --image-prefix=*)
-            VLLMD_KVM_IMAGE_PATH_PREFIX="${1#*=}"
+            VLLMD_RUNTIME_IMAGE_PREFIX_PATH="${1#*=}"
             shift
             ;;
         --source-raw-image=*)
-            VLLMD_KVM_SOURCE_RAW_FILEPATH="${1#*=}"
+            VLLMD_RUNTIME_SOURCE_RAW_FILEPATH="${1#*=}"
             shift
             ;;
         --hypervisor-fw=*)
-            VLLMD_KVM_HYPERVISOR_FW_FILEPATH="${1#*=}"
+            VLLMD_RUNTIME_HYPERVISOR_FW_FILEPATH="${1#*=}"
             shift
             ;;
-        --cloudinit-disk=*)
-            VLLMD_KVM_CLOUDINIT_FILEPATH="${1#*=}"
+        --config-image=*)
+            VLLMD_RUNTIME_CONFIG_IMAGE_FILEPATH="${1#*=}"
+            shift
+            ;;
+        --gpu-blocklist=*)
+            GPU_BLOCKLIST="${1#*=}"
             shift
             ;;
         --help)
@@ -97,27 +180,30 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Read GPU blocklist from config file if it exists (but command line takes precedence)
+read_gpu_blocklist_from_config
+
 # ===== Constants =====
 
 # Directories
-readonly VLLMD_KVM_CONFIG_PATH="${HOME}/.config/vllmd"
-readonly VLLMD_KVM_SYSTEMD_PATH="${HOME}/.config/systemd/user"
-readonly VLLMD_KVM_RUN_PATH="${HOME}/.local/run/vllmd"
-readonly VLLMD_KVM_LOG_PATH="${HOME}/.local/log/vllmd"
-readonly VLLMD_KVM_IMAGE_PATH="${VLLMD_KVM_IMAGE_PATH_PREFIX}/images"
+readonly VLLMD_RUNTIME_CONFIG_PATH="${HOME}/.config/vllmd"
+readonly VLLMD_RUNTIME_SYSTEMD_PATH="${HOME}/.config/systemd/user"
+readonly VLLMD_RUNTIME_RUN_PATH="${HOME}/.local/run/vllmd"
+readonly VLLMD_RUNTIME_LOG_PATH="${HOME}/.local/log/vllmd"
+readonly VLLMD_RUNTIME_IMAGE_PATH="${HOME}/.local/share/vllmd/images"
 
 # Files
-readonly VLLMD_KVM_VFIO_FILEPATH="/etc/modprobe.d/vllmd-vfio.conf"
-readonly VLLMD_KVM_MODULES_FILEPATH="/etc/modules-load.d/vllmd-modules.conf"
-readonly VLLMD_KVM_UDEV_RULES_FILEPATH="/etc/udev/rules.d/99-vllmd.rules"
-readonly VLLMD_KVM_SYSCTL_FILEPATH="/etc/sysctl.d/vllmd-sysctl.conf"
-readonly VLLMD_KVM_GRUB_FILEPATH="/etc/default/grub.d/vllmd-grub.conf"
+readonly VLLMD_RUNTIME_VFIO_FILEPATH="/etc/modprobe.d/vllmd-vfio.conf"
+readonly VLLMD_RUNTIME_MODULES_FILEPATH="/etc/modules-load.d/vllmd-modules.conf"
+readonly VLLMD_RUNTIME_UDEV_RULES_FILEPATH="/etc/udev/rules.d/00-vllmd.rules"
+readonly VLLMD_RUNTIME_SYSCTL_FILEPATH="/etc/sysctl.d/vllmd-sysctl.conf"
+readonly VLLMD_RUNTIME_GRUB_FILEPATH="/etc/default/grub.d/vllmd-grub.conf"
 
 # Safety limits
-readonly VLLMD_KVM_MAX_GPU_COUNT=8
-readonly VLLMD_KVM_MIN_MEMORY_GB=4
-readonly VLLMD_KVM_MAX_MEMORY_GB=2048
-readonly VLLMD_KVM_DEFAULT_MEMORY_GB=16
+readonly VLLMD_RUNTIME_MAX_GPU_COUNT=8
+readonly VLLMD_RUNTIME_MIN_MEMORY_GB=4
+readonly VLLMD_RUNTIME_MAX_MEMORY_GB=2048
+readonly VLLMD_RUNTIME_DEFAULT_MEMORY_GB=16
 
 # ===== Helper Functions =====
 
@@ -129,6 +215,10 @@ print_banner() {
         echo "*** DRY RUN MODE - No changes will be made ***"
     fi
     echo "============================================="
+    echo "This script configures a fully rootless virtualization environment"
+    echo "Uses vllmd-hypervisor exclusively for VM management"
+    echo "Device access is provided through KVM group membership"
+    echo "============================================="
     echo
 }
 
@@ -138,6 +228,8 @@ enable_user_linger() {
     if [[ "${DRY_RUN}" -eq 1 ]]; then
         echo "Would check if linger is enabled for current user"
         echo "Would enable linger if not already enabled"
+        echo "Would check if user is in the kvm group"
+        echo "Would add user to kvm group if needed"
         return 0
     fi
     
@@ -152,6 +244,16 @@ enable_user_linger() {
         log_info "Linger is already enabled for user ${USER}."
     fi
     
+    # Check if user is in the kvm group
+    log_info "Checking if user ${USER} is in the kvm group..."
+    if ! groups "${USER}" | grep -q "\bkvm\b"; then
+        log_info "Adding user ${USER} to the kvm group..."
+        elevate usermod -aG kvm "${USER}"
+        log_info "User added to kvm group. You may need to log out and log back in for this to take effect."
+    else
+        log_info "User ${USER} is already in the kvm group."
+    fi
+    
     return 0
 }
 
@@ -162,23 +264,7 @@ next_step() {
     fi
 }
 
-log() {
-    local level="$1"
-    local message="$2"
-    echo "[${level}] ${message}"
-}
-
-log_info() {
-    log "INFO" "$1"
-}
-
-log_warn() {
-    log "WARNING" "$1" >&2
-}
-
-log_error() {
-    log "ERROR" "$1" >&2
-}
+# Logging functions are already defined at the top of the script
 
 ask_continue() {
     local prompt="$1"
@@ -238,6 +324,34 @@ check_command() {
         log_error "Required command '${cmd}' not found"
         return 1
     fi
+    return 0
+}
+
+check_cap_tools() {
+    next_step "Checking for capability tools"
+    
+    if [[ "${DRY_RUN}" -eq 1 ]]; then
+        echo "Would check if /usr/sbin/getcap and /usr/sbin/setcap are installed"
+        return 0
+    fi
+    
+    log_info "Checking for capability tools..."
+    
+    if [[ ! -x "/usr/sbin/getcap" ]]; then
+        log_error "/usr/sbin/getcap is not installed or not executable."
+        log_error "Please install the libcap2-bin package:"
+        log_error "sudo apt-get install libcap2-bin"
+        return 1
+    fi
+    
+    if [[ ! -x "/usr/sbin/setcap" ]]; then
+        log_error "/usr/sbin/setcap is not installed or not executable."
+        log_error "Please install the libcap2-bin package:"
+        log_error "sudo apt-get install libcap2-bin"
+        return 1
+    fi
+    
+    log_info "Capability tools are available"
     return 0
 }
 
@@ -387,35 +501,85 @@ check_iommu() {
     fi
 }
 
-check_cloud_hypervisor() {
-    next_step "Checking for cloud-hypervisor"
+check_vllmd_hypervisor() {
+    next_step "Checking for vllmd-hypervisor"
     
     if [[ "${DRY_RUN}" -eq 1 ]]; then
-        echo "Would check if cloud-hypervisor is installed"
+        echo "Would check if vllmd-hypervisor launcher is installed"
+        echo "Would verify vllmd-hypervisor has cap_net_admin capability"
         return 0
     fi
     
-    log_info "Checking for cloud-hypervisor..."
+    log_info "Checking for vllmd-hypervisor launcher..."
     
-    if ! check_command "cloud-hypervisor"; then
-        log_error "cloud-hypervisor is not installed."
-        log_error "Please install cloud-hypervisor v40.0 or later."
-        log_error "https://github.com/cloud-hypervisor/cloud-hypervisor/releases"
+    if ! check_command "vllmd-hypervisor"; then
+        log_error "vllmd-hypervisor is not installed."
+        log_error "Please install vllmd-hypervisor by building from the Rust codebase."
+        log_error "See: /home/arnold/repos/vllmd/rust/vllmd-hypervisor"
         return 1
     fi
     
-    # Check version with more robust pattern matching
-    local version
-    version=$(cloud-hypervisor --version | grep -oP 'cloud-hypervisor v\K[0-9]+\.[0-9]+(-dirty)?' || echo "unknown")
-    log_info "Found cloud-hypervisor version: ${version}"
-    
-    if [[ "${version}" == "unknown" ]]; then
-        log_warn "Could not determine cloud-hypervisor version."
+    # Check basic functionality
+    if ! vllmd-hypervisor --help &>/dev/null; then
+        log_warn "Could not verify vllmd-hypervisor functionality."
         if ! ask_continue "Continue anyway?"; then
             return 1
         fi
     fi
     
+    # Check if vllmd-hypervisor has the required capability
+    log_info "Checking if vllmd-hypervisor has the required network capabilities..."
+    
+    local vh_path
+    vh_path=$(which vllmd-hypervisor)
+    log_info "vllmd-hypervisor path: ${vh_path}"
+    
+    local has_cap
+    local getcap_output
+    getcap_output=$(/usr/sbin/getcap "${vh_path}" 2>/dev/null || echo "")
+    log_info "getcap output: \"${getcap_output}\""
+    has_cap=$(echo "${getcap_output}" | grep -q "cap_net_admin+ep" && echo "yes" || echo "no")
+    
+    if [[ "${has_cap}" == "no" ]]; then
+        log_warn "vllmd-hypervisor does not have the required network capabilities."
+        log_warn "To fix this, you need to run:"
+        log_warn "sudo setcap cap_net_admin+ep ${vh_path}"
+        
+        if ask_continue "Set cap_net_admin capability now?"; then
+            log_info "Setting cap_net_admin capability on vllmd-hypervisor (requires sudo)..."
+            
+            # Use sudo for setcap as it requires root privileges
+            log_info "Running: sudo setcap cap_net_admin+ep ${vh_path}"
+            sudo setcap cap_net_admin+ep "${vh_path}"
+            
+            # Verify it worked
+            local verify_output
+            verify_output=$(/usr/sbin/getcap "${vh_path}" 2>/dev/null || echo "")
+            log_info "Verification getcap output: \"${verify_output}\""
+            
+            if echo "${verify_output}" | grep -q "cap_net_admin+ep"; then
+                log_info "Successfully set cap_net_admin capability on vllmd-hypervisor."
+            else
+                log_error "Failed to verify cap_net_admin capability on vllmd-hypervisor."
+                log_error "Please run the following command manually as root:"
+                log_error "sudo setcap cap_net_admin+ep ${vh_path}"
+                
+                if ! ask_continue "Continue anyway (capability might still be effective)?"; then
+                    return 1
+                fi
+                log_warn "Continuing without verified capability."
+            fi
+        else
+            log_warn "Without the cap_net_admin capability, network functionality may not work correctly."
+            if ! ask_continue "Continue anyway?"; then
+                return 1
+            fi
+        fi
+    else
+        log_info "vllmd-hypervisor has the required network capabilities."
+    fi
+    
+    log_info "vllmd-hypervisor launcher is ready for use."
     return 0
 }
 
@@ -447,13 +611,21 @@ discover_gpus() {
     if [[ "${DRY_RUN}" -eq 1 ]]; then
         echo "Would search for NVIDIA GPUs using lspci"
         echo "Would identify GPU models and map to known properties"
+        echo "Would apply GPU blocklist if specified: ${GPU_BLOCKLIST}"
         return 0
     fi
     
     log_info "Discovering NVIDIA GPUs..."
     
     declare -a gpu_list=()
+    declare -a blocklist_array=()
     local vendor_id="10de" # NVIDIA vendor ID
+    
+    # Parse the GPU blocklist if it's specified
+    if [[ -n "${GPU_BLOCKLIST}" ]]; then
+        IFS=',' read -ra blocklist_array <<< "${GPU_BLOCKLIST}"
+        log_info "GPU blocklist contains ${#blocklist_array[@]} entries: ${GPU_BLOCKLIST}"
+    fi
     
     # Use lspci to find all NVIDIA GPUs
     local gpu_devices
@@ -478,6 +650,15 @@ discover_gpus() {
         # Format to standard PCI address format (with leading zeros)
         pci_address=$(printf "0000:%s" "${pci_address}")
         
+        # Check if this GPU is in the blocklist
+        local is_blocked=0
+        for blocked_gpu in "${blocklist_array[@]}"; do
+            if [[ "${pci_address}" == "${blocked_gpu}" ]]; then
+                is_blocked=1
+                break
+            fi
+        done
+        
         # Look up the GPU model and details from our known list
         local gpu_info="Unknown"
         for known_gpu in "${NVIDIA_GPUS[@]}"; do
@@ -489,19 +670,29 @@ discover_gpus() {
             fi
         done
         
-        echo "  ${pci_address}: ${gpu_info}"
-        gpu_list+=("${pci_address}")
+        if [[ "${is_blocked}" -eq 1 ]]; then
+            echo "  ${pci_address}: ${gpu_info} [BLOCKED - in blocklist]"
+        else
+            echo "  ${pci_address}: ${gpu_info}"
+            gpu_list+=("${pci_address}")
+        fi
     done
     
     if [[ ${#gpu_list[@]} -eq 0 ]]; then
-        log_warn "No supported NVIDIA GPUs found."
+        log_warn "No usable NVIDIA GPUs found (all GPUs may be blocklisted)."
         return 0
     fi
     
     # Export the GPU list to make it available globally
     export GPU_LIST=("${gpu_list[@]}")
     
-    echo "Found ${#gpu_list[@]} NVIDIA GPUs"
+    local blocked_count=$((${#gpu_device_lines[@]} - ${#gpu_list[@]}))
+    if [[ "${blocked_count}" -gt 0 ]]; then
+        echo "Found ${#gpu_list[@]} usable NVIDIA GPUs (${blocked_count} blocked)"
+    else
+        echo "Found ${#gpu_list[@]} NVIDIA GPUs"
+    fi
+    
     return 0
 }
 
@@ -567,26 +758,40 @@ options vfio_iommu_type1 allow_unsafe_interrupts=0
 options vfio_pci disable_idle_d3=1"
 
     # Create udev rules for secure device access
-    local udev_content="# VLLMD VFIO device permissions
-SUBSYSTEM==\"vfio\", OWNER=\"root\", GROUP=\"kvm\", MODE=\"0640\"
-ACTION==\"add\", SUBSYSTEM==\"vfio\", KERNEL==\"vfio\", NAME=\"vfio/vfio\", MODE=\"0640\"
-ACTION==\"add\", SUBSYSTEM==\"vfio\", KERNEL==\"[0-9]*\", NAME=\"vfio/%k\", MODE=\"0640\""
+    local udev_content="# Consolidated VLLMD rules for devices
+# Combines all rules for VFIO, tap, and PCI devices
+# These rules enable fully rootless operation through group permissions
+
+# VFIO device permissions - KVM group access
+SUBSYSTEM==\"vfio\", OWNER=\"root\", GROUP=\"kvm\", MODE=\"0660\"
+ACTION==\"add\", SUBSYSTEM==\"vfio\", KERNEL==\"vfio\", NAME=\"vfio/vfio\", MODE=\"0660\"
+ACTION==\"add\", SUBSYSTEM==\"vfio\", KERNEL==\"[0-9]*\", NAME=\"vfio/%k\", MODE=\"0660\"
+
+# Tap device permissions - KVM group access 
+SUBSYSTEM==\"tap\", GROUP=\"kvm\", MODE=\"0660\"
+KERNEL==\"tap[0-9]*\", GROUP=\"kvm\", MODE=\"0660\"
+
+# PCI device permissions for NVIDIA GPUs - KVM group access
+SUBSYSTEM==\"pci\", ATTR{vendor}==\"0x10de\", GROUP=\"kvm\", MODE=\"0660\"
+
+# Hugepages access for KVM group
+SUBSYSTEM==\"memory\", KERNEL==\"hugepages\", GROUP=\"kvm\", MODE=\"0770\""
 
     # Write config files with sudo
     local config_updated=0
     
-    if ! file_exists "${VLLMD_KVM_MODULES_FILEPATH}" || ask_continue "Overwrite existing ${VLLMD_KVM_MODULES_FILEPATH}?"; then
-        write_file "${VLLMD_KVM_MODULES_FILEPATH}" "${modules_content}" 1
+    if ! file_exists "${VLLMD_RUNTIME_MODULES_FILEPATH}" || ask_continue "Overwrite existing ${VLLMD_RUNTIME_MODULES_FILEPATH}?"; then
+        write_file "${VLLMD_RUNTIME_MODULES_FILEPATH}" "${modules_content}" 1
         config_updated=1
     fi
     
-    if ! file_exists "${VLLMD_KVM_VFIO_FILEPATH}" || ask_continue "Overwrite existing ${VLLMD_KVM_VFIO_FILEPATH}?"; then
-        write_file "${VLLMD_KVM_VFIO_FILEPATH}" "${vfio_content}" 1
+    if ! file_exists "${VLLMD_RUNTIME_VFIO_FILEPATH}" || ask_continue "Overwrite existing ${VLLMD_RUNTIME_VFIO_FILEPATH}?"; then
+        write_file "${VLLMD_RUNTIME_VFIO_FILEPATH}" "${vfio_content}" 1
         config_updated=1
     fi
     
-    if ! file_exists "${VLLMD_KVM_UDEV_RULES_FILEPATH}" || ask_continue "Overwrite existing ${VLLMD_KVM_UDEV_RULES_FILEPATH}?"; then
-        write_file "${VLLMD_KVM_UDEV_RULES_FILEPATH}" "${udev_content}" 1
+    if ! file_exists "${VLLMD_RUNTIME_UDEV_RULES_FILEPATH}" || ask_continue "Overwrite existing ${VLLMD_RUNTIME_UDEV_RULES_FILEPATH}?"; then
+        write_file "${VLLMD_RUNTIME_UDEV_RULES_FILEPATH}" "${udev_content}" 1
         config_updated=1
     fi
     
@@ -635,10 +840,10 @@ setup_hugepages() {
     local hugepages_gb=$((mem_gb / 2))
     
     # Ensure we're within reasonable limits
-    if [[ "${hugepages_gb}" -lt "${MIN_MEMORY_GB}" ]]; then
-        hugepages_gb="${MIN_MEMORY_GB}"
-    elif [[ "${hugepages_gb}" -gt "${MAX_MEMORY_GB}" ]]; then
-        hugepages_gb="${MAX_MEMORY_GB}"
+    if [[ "${hugepages_gb}" -lt "${VLLMD_RUNTIME_MIN_MEMORY_GB}" ]]; then
+        hugepages_gb="${VLLMD_RUNTIME_MIN_MEMORY_GB}"
+    elif [[ "${hugepages_gb}" -gt "${VLLMD_RUNTIME_MAX_MEMORY_GB}" ]]; then
+        hugepages_gb="${VLLMD_RUNTIME_MAX_MEMORY_GB}"
     fi
     
     # 2MB hugepages
@@ -655,12 +860,12 @@ vm.swappiness = 0"
     local grub_content="# VLLMD hugepage GRUB configuration
 GRUB_CMDLINE_LINUX=\"\${GRUB_CMDLINE_LINUX} default_hugepagesz=2M hugepagesz=2M hugepages=${num_hugepages}\""
 
-    if ! file_exists "${VLLMD_KVM_SYSCTL_FILEPATH}" || ask_continue "Overwrite existing ${VLLMD_KVM_SYSCTL_FILEPATH}?"; then
-        write_file "${VLLMD_KVM_SYSCTL_FILEPATH}" "${sysctl_content}" 1
+    if ! file_exists "${VLLMD_RUNTIME_SYSCTL_FILEPATH}" || ask_continue "Overwrite existing ${VLLMD_RUNTIME_SYSCTL_FILEPATH}?"; then
+        write_file "${VLLMD_RUNTIME_SYSCTL_FILEPATH}" "${sysctl_content}" 1
     fi
     
-    if ! file_exists "${VLLMD_KVM_GRUB_FILEPATH}" || ask_continue "Overwrite existing ${VLLMD_KVM_GRUB_FILEPATH}?"; then
-        write_file "${VLLMD_KVM_GRUB_FILEPATH}" "${grub_content}" 1
+    if ! file_exists "${VLLMD_RUNTIME_GRUB_FILEPATH}" || ask_continue "Overwrite existing ${VLLMD_RUNTIME_GRUB_FILEPATH}?"; then
+        write_file "${VLLMD_RUNTIME_GRUB_FILEPATH}" "${grub_content}" 1
         
         if [[ "${DRY_RUN}" -eq 1 ]]; then
             echo "Would update GRUB configuration with update-grub"
@@ -712,21 +917,53 @@ create_directory_structure() {
     
     if [[ "${DRY_RUN}" -eq 1 ]]; then
         echo "Would create directories:"
-        echo "  ${VLLMD_KVM_CONFIG_PATH}"
-        echo "  ${VLLMD_KVM_SYSTEMD_PATH}"
-        echo "  ${VLLMD_KVM_RUN_PATH}"
-        echo "  ${VLLMD_KVM_LOG_PATH}"
-        echo "  ${VLLMD_KVM_IMAGE_PATH}"
+        echo "  ${VLLMD_RUNTIME_CONFIG_PATH}"
+        echo "  ${VLLMD_RUNTIME_SYSTEMD_PATH}"
+        echo "  ${VLLMD_RUNTIME_RUN_PATH}"
+        echo "  ${VLLMD_RUNTIME_LOG_PATH}"
+        echo "  ${VLLMD_RUNTIME_IMAGE_PATH}"
+        echo "Would create default configuration file"
         return 0
     fi
     
     log_info "Creating VLLMD directory structure..."
     
-    mkdir --parents "${VLLMD_KVM_CONFIG_PATH}"
-    mkdir --parents "${VLLMD_KVM_SYSTEMD_PATH}"
-    mkdir --parents "${VLLMD_KVM_RUN_PATH}"
-    mkdir --parents "${VLLMD_KVM_LOG_PATH}"
-    mkdir --parents "${VLLMD_KVM_IMAGE_PATH}"
+    mkdir --parents "${VLLMD_RUNTIME_CONFIG_PATH}"
+    mkdir --parents "${VLLMD_RUNTIME_SYSTEMD_PATH}"
+    mkdir --parents "${VLLMD_RUNTIME_RUN_PATH}"
+    mkdir --parents "${VLLMD_RUNTIME_LOG_PATH}"
+    mkdir --parents "${VLLMD_RUNTIME_IMAGE_PATH}"
+    
+    # Create default configuration file
+    if [[ ! -f "${VLLMD_RUNTIME_CONFIG_PATH}/vllmd-hypervisor-runtime-defaults.toml" ]]; then
+        log_info "Creating default runtime configuration file..."
+        
+        # Create default TOML configuration
+        cat > "${VLLMD_RUNTIME_CONFIG_PATH}/vllmd-hypervisor-runtime-defaults.toml" << EOF
+# VLLMD Hypervisor Runtime Default Configuration
+
+[system]
+# Base paths for runtime files
+image_path = "${VLLMD_RUNTIME_IMAGE_PATH}"
+source_raw_filepath = "${VLLMD_RUNTIME_SOURCE_RAW_FILEPATH}"
+hypervisor_fw_filepath = "${VLLMD_RUNTIME_HYPERVISOR_FW_FILEPATH}"
+config_image_filepath = "${VLLMD_RUNTIME_CONFIG_IMAGE_FILEPATH}"
+
+[runtime]
+# Default runtime settings
+default_memory_gb = 16
+default_cpus = 4
+default_disk_size_gb = 50
+
+[gpu]
+# GPU configuration
+gpu_blocklist = "${GPU_BLOCKLIST}"  # Comma-separated list of GPU addresses to block
+EOF
+        
+        log_info "Default configuration file created at ${VLLMD_RUNTIME_CONFIG_PATH}/vllmd-hypervisor-runtime-defaults.toml"
+    else
+        log_info "Default configuration file already exists"
+    fi
     
     log_info "Directory structure created"
     return 0
@@ -737,62 +974,58 @@ create_directory_structure() {
 create_systemd_service_template() {
     next_step "Creating systemd service templates"
     
-    # Create the pre-start service template
-    local pre_start_service_filepath="${VLLMD_KVM_SYSTEMD_PATH}/vllmd-kvm-pre-start@.service"
-    local pre_start_content="[Unit]
-Description=VLLMD Pre-start setup for VM %i
-Before=vllmd-kvm@%i.service
-Slice=vllmd.slice
+    # We no longer need the pre-start service since vllmd-hypervisor handles all lifecycle operations
+    # This block is kept as a comment for reference
+    # local pre_start_service_filepath="${VLLMD_RUNTIME_SYSTEMD_PATH}/vllmd-runtime-pre-start@.service"
+    # local pre_start_content="[Unit]
+# Description=VLLMD Pre-start setup for Runtime %i
+# Before=vllmd-runtime@%i.service
+#
+# [Service]
+# Slice=vllmd.slice
+# Type=oneshot
+# RemainAfterExit=yes
+# EnvironmentFile=%h/.config/vllmd/runtime-%i.env
+# ExecStart=/bin/true
+#
+# [Install]
+# WantedBy=default.target"
+
+    # Create the main runtime service template
+    # Make sure the parent directory exists
+    mkdir -p "${VLLMD_RUNTIME_SYSTEMD_PATH}"
+    local runtime_service_filepath="${VLLMD_RUNTIME_SYSTEMD_PATH}/vllmd-runtime@.service"
+    local runtime_content="[Unit]
+Description=VLLMD Runtime %i
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
-EnvironmentFile=%h/.config/vllmd/%i.conf
-ExecStart=/bin/sh -c 'ip link add link \"\${VLLMD_KVM_HOST_NET}\" name macvtap\${VLLMD_KVM_ID} type macvtap'
-ExecStart=/bin/sh -c 'ip link set macvtap\${VLLMD_KVM_ID} up'
-ExecStop=/bin/sh -c 'ip link delete macvtap\${VLLMD_KVM_ID}'
-
-[Install]
-WantedBy=default.target"
-
-    # Create the main VM service template
-    local vm_service_filepath="${VLLMD_KVM_SYSTEMD_PATH}/vllmd-kvm@.service"
-    local vm_content="[Unit]
-Description=VLLMD Virtual Machine %i
-Requires=vllmd-kvm-pre-start@%i.service
-After=vllmd-kvm-pre-start@%i.service
-Slice=vllmd.slice
-
-[Service]
+# Configure as a non-daemon service that stays in foreground
 Type=simple
-Environment=VLLMD_KVM_RUNTIME_PATH=%h/.local/run/vllmd/%i
-Environment=VLLMD_KVM_LOG_FILEPATH=%h/.local/log/vllmd/%i.log
-EnvironmentFile=%h/.config/vllmd/%i.conf
+RemainAfterExit=no
+# Environment variables for vllmd-hypervisor launcher
+# These variables will be merged with the ones in the EnvironmentFile
+Environment=VLLMD_RUNTIME_ID=%i
+Environment=VLLMD_RUNTIME_PATH=%h/.local/run/vllmd/%i
+Environment=VLLMD_RUNTIME_API_SOCKET=%h/.local/run/vllmd/%i/api.sock
+Environment=VLLMD_RUNTIME_LOG_FILEPATH=%h/.local/log/vllmd/%i.log
+# Include all configuration from the runtime env file
+EnvironmentFile=%h/.config/vllmd/runtime-%i.env
 
-ExecStartPre=/bin/sh -c 'mkdir --parents \"\${VLLMD_KVM_RUNTIME_PATH}\"'
-ExecStart=cloud-hypervisor \\
-    --api-socket \"\${VLLMD_KVM_RUNTIME_PATH}/api.sock\" \\
-    --kernel \"\${VLLMD_KVM_KERNEL_FILEPATH}\" \\
-    --disk path=\"\${VLLMD_KVM_DISK_FILEPATH}\" \\
-          path=\"\${VLLMD_KVM_CLOUDINIT_DISK}\",readonly=on \\
-    --cpus boot=\"\${VLLMD_KVM_CPUS}\" \\
-    --memory \"\${VLLMD_KVM_MEMORY}\" \\
-    --serial tty \\
-    --console off \\
-    --net fd=3,num_queues=8 3<>/dev/tap\$(cat /sys/class/net/macvtap\${VLLMD_KVM_ID}/ifindex) \\
-    --device path=\"\${VLLMD_KVM_GPU_DEVICE}\" \\
-    --log-file \"\${VLLMD_KVM_LOG_FILEPATH}\" \\
-    --cmdline \"\${VLLMD_KVM_CMDLINE}\"
+# Create the runtime directory
+ExecStartPre=/bin/sh -c 'mkdir --parents %h/.local/run/vllmd/%i'
+# vllmd-hypervisor reads all configuration from environment variables
+ExecStart=/usr/local/bin/vllmd-hypervisor start
+# The vllmd-hypervisor launcher handles device access correctly
 
-ExecStop=/bin/sh -c 'if [ -S \"\${VLLMD_KVM_RUNTIME_PATH}/api.sock\" ]; then \\
-    curl --unix-socket \"\${VLLMD_KVM_RUNTIME_PATH}/api.sock\" \\
-      -X PUT \"http://localhost/api/v1/vm.shutdown\"; \\
-    timeout 30 bash -c \"while [ -S \\\"\${VLLMD_KVM_RUNTIME_PATH}/api.sock\\\" ]; do \\
-        sleep 1; \\
-    done\"; \\
-fi'
-ExecStopPost=/bin/sh -c 'rm -rf \"\${VLLMD_KVM_RUNTIME_PATH}\"'
+# Stop the VM using only environment variables for configuration
+ExecStop=/usr/local/bin/vllmd-hypervisor stop
+# Clean up the runtime directory
+ExecStopPost=/bin/sh -c 'rm -rf %h/.local/run/vllmd/%i'
 
+# Process management configuration
+KillMode=process
+KillSignal=SIGTERM
+SendSIGKILL=yes
 Restart=on-failure
 RestartSec=5
 TimeoutStartSec=300
@@ -802,29 +1035,39 @@ TimeoutStopSec=30
 WantedBy=default.target"
 
     # Write service files
-    if ! file_exists "${pre_start_service_filepath}" || ask_continue "Overwrite existing ${pre_start_service_filepath}?"; then
-        write_file "${pre_start_service_filepath}" "${pre_start_content}"
-    fi
+    # We no longer need the pre-start service
+    # if ! file_exists "${pre_start_service_filepath}" || ask_continue "Overwrite existing ${pre_start_service_filepath}?"; then
+    #     write_file "${pre_start_service_filepath}" "${pre_start_content}"
+    # fi
     
-    if ! file_exists "${vm_service_filepath}" || ask_continue "Overwrite existing ${vm_service_filepath}?"; then
-        write_file "${vm_service_filepath}" "${vm_content}"
+    if ! file_exists "${runtime_service_filepath}" || ask_continue "Overwrite existing ${runtime_service_filepath}?"; then
+        write_file "${runtime_service_filepath}" "${runtime_content}"
     fi
     
     log_info "Systemd service templates created"
     return 0
 }
 
-create_vm_config() {
-    local vm_name="$1"
+create_runtime_config() {
+    local runtime_id="$1"
     local gpu_address="$2"
-    local memory_gb="${3:-$DEFAULT_MEMORY_GB}"
+    # Use VLLMD_RUNTIME_DEFAULT_MEMORY_GB or default to 16 if not set
+    local memory_gb="${3:-${VLLMD_RUNTIME_DEFAULT_MEMORY_GB:-16}}"
+    # Ensure memory value is uppercase G for cloud-hypervisor compatibility
+    local memory_gb_uppercase=$(echo "${memory_gb}" | sed 's/g$/G/')
     local cpus="${4:-4}"
     
-    next_step "Creating VM configuration for ${vm_name}"
+    next_step "Creating runtime configuration for runtime-${runtime_id}"
     
-    local config_filepath="${VLLMD_KVM_CONFIG_PATH}/${vm_name}.conf"
-    local vm_path="${VLLMD_KVM_IMAGE_PATH}/${vm_name}"
-    local disk_filepath="${vm_path}/disk.raw"
+    local config_filepath="${VLLMD_RUNTIME_CONFIG_PATH}/runtime-${runtime_id}.env"
+    local runtime_path="${VLLMD_RUNTIME_IMAGE_PATH}/runtime-${runtime_id}"
+    local disk_filepath="${runtime_path}/disk.raw"
+    
+    # Ensure config directory exists
+    mkdir -p "${VLLMD_RUNTIME_CONFIG_PATH}"
+    
+    # Ensure runtime directory exists
+    mkdir -p "${runtime_path}"
     
     # Find GPU model from address
     local gpu_model="Unknown"
@@ -861,7 +1104,7 @@ create_vm_config() {
     # This ensures deterministic but unique MAC addresses
     local mac_prefix="52:54:00"
     local hash
-    hash=$(echo "${vm_name}" | md5sum | head -c 6)
+    hash=$(echo "runtime-${runtime_id}" | md5sum | head -c 6)
     local mac_suffix
     mac_suffix=$(echo "${hash}" | sed 's/\(..\)/\1:/g' | sed 's/:$//')
     local mac_address="${mac_prefix}:${mac_suffix}"
@@ -874,82 +1117,65 @@ create_vm_config() {
         default_interface=$(ip route | grep default | awk '{print $5}' | head -1)
     fi
     
-    cat > /dev/null << EOF
-# VLLMD VM Configuration for ${vm_name}
-# GPU: ${gpu_model} (${gpu_address})
-# NUMA Node: ${numa_node}
+    # Removed the EOF redirection to /dev/null - This was a no-op
 
-# VM Identification
-VLLMD_KVM_ID="${vm_name}"
-
-# Network Configuration
-VLLMD_KVM_HOST_NET="ens8f1"
-
-# Hardware Configuration
-VLLMD_KVM_CPUS="${cpus}"
-VLLMD_KVM_MEMORY="size=${memory_gb}G,hugepages=on,hugepage_size=2M,shared=on"
-
-# Storage Configuration
-VLLMD_KVM_DISK_FILEPATH="${disk_path}"
-VLLMD_KVM_CLOUDINIT_DISK="${CLOUDINIT_DISK}"
-
-# Boot Configuration
-VLLMD_KVM_KERNEL_FILEPATH="${HYPERVISOR_FW_PATH}"
-VLLMD_KVM_CMDLINE="root=/dev/vda1 rw console=ttyS0 hugepagesz=2M hugepages=32768 default_hugepagesz=2M intel_iommu=on iommu=pt"
-
-# GPU Configuration
-VLLMD_KVM_GPU_DEVICE="${gpu_address}"
-EOF
-
+    # Define runtime path variable for use in configuration
+    local runtime_run_path="${HOME}/.local/run/vllmd/${runtime_id}"
+    
     local config_content
     config_content=$(cat << EOF
-# VLLMD VM Configuration for ${vm_name}
+# VLLMD Runtime Configuration for runtime-${runtime_id}
 # GPU: ${gpu_model} (${gpu_address})
 # NUMA Node: ${numa_node}
+# Created: $(date)
 
-# VM Identification
-VLLMD_KVM_ID="${vm_name}"
+# Runtime Identification
+VLLMD_RUNTIME_ID="${runtime_id}"
 
-# Network Configuration
-VLLMD_KVM_HOST_NET="${default_interface}"
+# Runtime Path
+VLLMD_RUNTIME_PATH="${runtime_run_path}"
 
 # Hardware Configuration
-VLLMD_KVM_CPUS="${cpus}"
-VLLMD_KVM_MEMORY="size=${memory_gb}G,hugepages=on,hugepage_size=2M,shared=on"
+VLLMD_RUNTIME_CPUS="${cpus}"
+VLLMD_RUNTIME_MEMORY="size=${memory_gb_uppercase},hugepages=on,hugepage_size=2M,shared=on"
 
 # Storage Configuration
-VLLMD_KVM_DISK_FILEPATH="${disk_path}"
-VLLMD_KVM_CLOUDINIT_DISK="${CLOUDINIT_DISK}"
+VLLMD_RUNTIME_DISK_FILEPATH="${disk_filepath}"
+VLLMD_RUNTIME_CONFIG_DISK="${VLLMD_RUNTIME_CONFIG_IMAGE_FILEPATH}"
 
 # Boot Configuration
-VLLMD_KVM_KERNEL_FILEPATH="${HYPERVISOR_FW_PATH}"
-VLLMD_KVM_CMDLINE="root=/dev/vda1 rw console=ttyS0 hugepagesz=2M hugepages=32768 default_hugepagesz=2M intel_iommu=on iommu=pt"
+VLLMD_RUNTIME_KERNEL_FILEPATH="${VLLMD_RUNTIME_HYPERVISOR_FW_FILEPATH}"
+VLLMD_RUNTIME_CMDLINE="root=/dev/vda1 rw console=ttyS0 hugepagesz=2M hugepages=32768 default_hugepagesz=2M intel_iommu=on iommu=pt"
 
-# GPU Configuration
-VLLMD_KVM_GPU_DEVICE="${gpu_address}"
+# Serial and Console Configuration
+VLLMD_RUNTIME_SERIAL="tty"
+VLLMD_RUNTIME_CONSOLE="off"
+
+# GPU Configuration - accessed through vllmd-hypervisor launcher
+VLLMD_RUNTIME_GPU_DEVICE="${gpu_address}"
 EOF
 )
 
     if ! file_exists "${config_filepath}" || ask_continue "Overwrite existing ${config_filepath}?"; then
         write_file "${config_filepath}" "${config_content}"
     else
-        log_info "VM configuration not updated (kept existing file)"
+        log_info "Runtime configuration not updated (kept existing file)"
     fi
     
     return 0
 }
 
 create_disk_image() {
-    local vm_name="$1"
+    local runtime_id="$1"
     local size_gb="${2:-50}" # This parameter is no longer used since we copy an existing image
-    local vm_dir="${IMAGE_DIR}/${vm_name}"
-    local disk_path="${vm_dir}/disk.raw"
+    local runtime_dir="${VLLMD_RUNTIME_IMAGE_PATH}/runtime-${runtime_id}"
+    local disk_path="${runtime_dir}/disk.raw"
     
-    next_step "Setting up disk image for ${vm_name}"
+    next_step "Setting up disk image for runtime-${runtime_id}"
     
     if [[ "${DRY_RUN}" -eq 1 ]]; then
-        echo "Would create VM directory at ${vm_dir}"
-        echo "Would check if source raw image exists at ${SOURCE_RAW_IMAGE}"
+        echo "Would create runtime directory at ${runtime_dir}"
+        echo "Would check if source raw image exists at ${VLLMD_RUNTIME_SOURCE_RAW_FILEPATH}"
         echo "Would check if target disk image already exists at ${disk_path}"
         
         if [[ "${DESTRUCTIVE_IMAGE_REPLACE}" -eq 1 ]]; then
@@ -961,13 +1187,13 @@ create_disk_image() {
     fi
     
     # Check if source image exists
-    if [[ ! -f "${SOURCE_RAW_IMAGE}" ]]; then
-        log_error "Source raw image '${SOURCE_RAW_IMAGE}' does not exist"
+    if [[ ! -f "${VLLMD_RUNTIME_SOURCE_RAW_FILEPATH}" ]]; then
+        log_error "Source raw image '${VLLMD_RUNTIME_SOURCE_RAW_FILEPATH}' does not exist"
         log_error "Specify a valid source image with --source-raw-image=PATH"
         return 1
     fi
     
-    # Create VM directory
+    # Create runtime directory
     make_parent_dirs "${disk_path}"
     
     # Check if target image already exists
@@ -981,10 +1207,10 @@ create_disk_image() {
         fi
     fi
     
-    log_info "Copying source image '${SOURCE_RAW_IMAGE}' to '${disk_path}'..."
+    log_info "Copying source image '${VLLMD_RUNTIME_SOURCE_RAW_FILEPATH}' to '${disk_path}'..."
     
     # Copy the source image to the target location
-    cp "${SOURCE_RAW_IMAGE}" "${disk_path}"
+    cp "${VLLMD_RUNTIME_SOURCE_RAW_FILEPATH}" "${disk_path}"
     
     # Add to created files list
     CREATED_FILES+=("${disk_path}")
@@ -1014,24 +1240,24 @@ readarray -t NVIDIA_GPUS <<< "${NVIDIA_GPUS_ARRAY}"
 
 # ===== Main Script =====
 
-create_cloudinit_disk() {
-    next_step "Creating cloud-init configuration disk"
+create_config_image() {
+    next_step "Creating VM configuration image"
     
     if [[ "${DRY_RUN}" -eq 1 ]]; then
-        echo "Would check if cloud-init disk exists at ${VLLMD_KVM_CLOUDINIT_FILEPATH}"
-        echo "Would create cloud-init disk with user 'sdake' if it doesn't exist"
+        echo "Would check if configuration image exists at ${VLLMD_RUNTIME_CONFIG_IMAGE_FILEPATH}"
+        echo "Would create configuration image with user 'sdake' if it doesn't exist"
         return 0
     fi
     
-    # Check if cloud-init disk already exists
-    if [[ -f "${VLLMD_KVM_CLOUDINIT_FILEPATH}" ]]; then
-        log_info "Cloud-init disk already exists at ${VLLMD_KVM_CLOUDINIT_FILEPATH}"
+    # Check if configuration image already exists
+    if [[ -f "${VLLMD_RUNTIME_CONFIG_IMAGE_FILEPATH}" ]]; then
+        log_info "Configuration image already exists at ${VLLMD_RUNTIME_CONFIG_IMAGE_FILEPATH}"
         return 0
     fi
     
-    log_info "Creating cloud-init configuration disk at ${VLLMD_KVM_CLOUDINIT_FILEPATH}"
+    log_info "Creating VM configuration image at ${VLLMD_RUNTIME_CONFIG_IMAGE_FILEPATH}"
     
-    # Create temporary directory for cloud-init files
+    # Create temporary directory for boot initialization files
     local temp_dir
     temp_dir=$(mktemp -d)
     
@@ -1059,22 +1285,22 @@ ssh_pwauth: true
 EOF
     
     # Create the parent directory if needed
-    mkdir -p "$(dirname "${VLLMD_KVM_CLOUDINIT_FILEPATH}")"
+    mkdir -p "$(dirname "${VLLMD_RUNTIME_CONFIG_IMAGE_FILEPATH}")"
     
     # Create FAT filesystem image
-    /usr/sbin/mkdosfs -n CIDATA -C "${VLLMD_KVM_CLOUDINIT_FILEPATH}" 8192
+    /usr/sbin/mkdosfs -n CONFIG -C "${VLLMD_RUNTIME_CONFIG_IMAGE_FILEPATH}" 8192
     
     # Copy files to the image
-    mcopy -oi "${VLLMD_KVM_CLOUDINIT_FILEPATH}" -s "${temp_dir}/user-data" ::
-    mcopy -oi "${VLLMD_KVM_CLOUDINIT_FILEPATH}" -s "${temp_dir}/meta-data" ::
+    mcopy -oi "${VLLMD_RUNTIME_CONFIG_IMAGE_FILEPATH}" -s "${temp_dir}/user-data" ::
+    mcopy -oi "${VLLMD_RUNTIME_CONFIG_IMAGE_FILEPATH}" -s "${temp_dir}/meta-data" ::
     
     # Cleanup
     rm -rf "${temp_dir}"
     
     # Add to created files list
-    CREATED_FILES+=("${VLLMD_KVM_CLOUDINIT_FILEPATH}")
+    CREATED_FILES+=("${VLLMD_RUNTIME_CONFIG_IMAGE_FILEPATH}")
     
-    log_info "Cloud-init disk created successfully"
+    log_info "VM configuration image created successfully"
     return 0
 }
 
@@ -1084,18 +1310,24 @@ main() {
     # Check requirements
     check_cpu_virtualization || return 1
     check_iommu || return 1
-    check_cloud_hypervisor || return 1
+    check_cap_tools || return 1
+    check_vllmd_hypervisor || return 1
     check_numactl || return 1
     
     # Discover resources
     discover_gpus
     discover_numa_topology
     
+    # Update GPU blocklist in config if provided via command line
+    if [[ -n "${GPU_BLOCKLIST}" ]]; then
+        update_gpu_blocklist_in_config
+    fi
+    
     # Setup environment
     create_directory_structure
     
-    # Create cloud-init disk if needed
-    create_cloudinit_disk
+    # Create VM configuration image if needed
+    create_config_image
     
     # Enable user linger for persistent VMs
     enable_user_linger
@@ -1133,11 +1365,11 @@ main() {
             
             for i in {0..3}; do
                 local gpu_address="${gpu_list[$i]}"
-                local vm_name="vllmd-kvm-${i}"
+                local vm_name="runtime-${i}"
                 local memory_gb=64
                 local cpus=16
                 
-                echo "Would create VM '${vm_name}' with GPU ${gpu_address}"
+                echo "Would create runtime VM '${vm_name}' with GPU ${gpu_address}"
                 echo "Would create VM config file"
                 echo "Would create 50GB disk image"
             done
@@ -1179,14 +1411,17 @@ main() {
                 local create_all="n"
                 local memory_gb cpus
                 
+                # Default memory size is 64GB if not set
+                local DEFAULT_MEMORY_GB="64G"
+                
                 if [[ "${AUTO_YES}" -eq 1 ]]; then
                     create_all="y"
-                    memory_gb="${DEFAULT_MEMORY_GB}"
+                    memory_gb="128G"
                     cpus=4
                 else
                     read -p "Create VMs for all GPUs? [y/n]: " create_all
                     read -p "Enter memory size in GB for each VM [${DEFAULT_MEMORY_GB}]: " memory_gb
-                    memory_gb="${memory_gb:-$DEFAULT_MEMORY_GB}"
+                    memory_gb="${memory_gb:-${DEFAULT_MEMORY_GB}}"
                     read -p "Enter number of CPUs for each VM [4]: " cpus
                     cpus="${cpus:-4}"
                 fi
@@ -1195,85 +1430,70 @@ main() {
                     # Create a VM for each GPU
                     for i in "${!gpu_list[@]}"; do
                         local gpu_address="${gpu_list[$i]}"
-                        local vm_name="vllmd-kvm-${i}"
+                        # Use the index directly as the runtime ID
                         
-                        create_vm_config "${vm_name}" "${gpu_address}" "${memory_gb}" "${cpus}"
-                        create_disk_image "${vm_name}" 50
+                        create_runtime_config "${i}" "${gpu_address}" "${memory_gb}" "${cpus}"
+                        create_disk_image "${i}" 50
                         
-                        log_info "VM '${vm_name}' configuration created with GPU ${gpu_address}"
+                        log_info "Runtime 'runtime-${i}' configuration created with GPU ${gpu_address}"
                     done
                     
-                    log_info "VM configurations created."
+                    log_info "Runtime configurations created."
                     
-                    # Add information about the raw disk images
-                    log_info "Note that the disk images are currently empty raw containers."
-                    log_info "You'll need to install an operating system onto them before the VMs can boot."
-                    log_info "For example, to install Debian:"
-                    echo "  1. Download a Debian ISO"
-                    echo "  2. Add the ISO to each VM command line with: --disk path=/path/to/debian.iso,readonly=on"
-                    echo "  3. Add a boot option: --boot order=cd,hd"
-                    echo
+                    # Check if the raw image exists or needs to be created
+                    if [[ -f "${VLLMD_RUNTIME_SOURCE_RAW_FILEPATH}" ]]; then
+                        log_info "Found ready-to-use runtime image at ${VLLMD_RUNTIME_SOURCE_RAW_FILEPATH}"
+                    else
+                        log_warn "No ready-to-use runtime image found."
+                        log_info "Please create a runtime image with:"
+                        echo "  bash generate-runtime-image.sh --output=\"${VLLMD_RUNTIME_IMAGE_PREFIX_PATH}/vllmd-hypervisor-runtime.raw\""
+                        echo
+                    fi
                     
                     log_info "To enable all systemd services (required for auto-start at boot):"
                     echo "  systemctl --user daemon-reload"
                     for i in "${!gpu_list[@]}"; do
-                        echo "  systemctl --user enable vllmd-kvm@vllmd-kvm-${i}.service"
+                        echo "  systemctl --user enable vllmd-runtime@${i}.service"
                     done
                     echo
-                    log_info "To start all VMs immediately:"
+                    log_info "To start all runtimes immediately:"
                     for i in "${!gpu_list[@]}"; do
-                        echo "  systemctl --user start vllmd-kvm@vllmd-kvm-${i}.service"
+                        echo "  systemctl --user start vllmd-runtime@${i}.service"
                     done
                     echo
-                    log_info "User linger has been enabled, so the VMs will persist after logout."
+                    log_info "User linger has been enabled, so the runtimes will persist after logout."
                 else
-                    # Allow selecting individual GPUs
-                    log_info "Select which GPUs to create VMs for (comma-separated list, e.g., 1,3,5):"
-                    local selections
-                    read -p "GPU numbers: " selections
+                    # Creating runtime-137
+                    local runtime_id="137"
+                    local gpu_address="0000:01:00.0"  # You may need to adjust this to your GPU address
                     
-                    IFS=',' read -ra selected_indices <<< "$selections"
-                    for idx in "${selected_indices[@]}"; do
-                        if [[ $idx =~ ^[0-9]+$ && $idx -ge 1 && $idx -le ${#gpu_list[@]} ]]; then
-                            local gpu_address="${gpu_list[$((idx-1))]}"
-                            local vm_name="vllmd-kvm-$((idx-1))"
-                            
-                            create_vm_config "${vm_name}" "${gpu_address}" "${memory_gb}" "${cpus}"
-                            create_disk_image "${vm_name}" 50
-                            
-                            log_info "VM '${vm_name}' configuration created with GPU ${gpu_address}"
-                        else
-                            log_error "Invalid selection: ${idx}"
-                        fi
-                    done
+                    log_info "Creating runtime-${runtime_id} configuration with GPU ${gpu_address}"
+                    create_runtime_config "${runtime_id}" "${gpu_address}" "${memory_gb}" "${cpus}"
+                    create_disk_image "${runtime_id}" 50
                     
-                    log_info "VM configurations created."
+                    # Store the runtime ID for later use in enable/start commands
+                    selected_indices=("${runtime_id}")
                     
-                    # Add information about the raw disk images
-                    log_info "Note that the disk images are currently empty raw containers."
-                    log_info "You'll need to install an operating system onto them before the VMs can boot."
-                    log_info "For example, to install Debian:"
-                    echo "  1. Download a Debian ISO"
-                    echo "  2. Add the ISO to each VM command line with: --disk path=/path/to/debian.iso,readonly=on"
-                    echo "  3. Add a boot option: --boot order=cd,hd"
-                    echo
+                    log_info "Runtime configurations created."
+                    
+                    # Check if the raw image exists or needs to be created
+                    if [[ -f "${VLLMD_RUNTIME_SOURCE_RAW_FILEPATH}" ]]; then
+                        log_info "Found ready-to-use runtime image at ${VLLMD_RUNTIME_SOURCE_RAW_FILEPATH}"
+                    else
+                        log_warn "No ready-to-use runtime image found."
+                        log_info "Please create a runtime image with:"
+                        echo "  bash generate-runtime-image.sh --output=\"${VLLMD_RUNTIME_IMAGE_PREFIX_PATH}/vllmd-hypervisor-runtime.raw\""
+                        echo
+                    fi
                     
                     log_info "To enable the systemd services (required for auto-start at boot):"
                     echo "  systemctl --user daemon-reload"
-                    for idx in "${selected_indices[@]}"; do
-                        if [[ $idx =~ ^[0-9]+$ && $idx -ge 1 && $idx -le ${#gpu_list[@]} ]]; then
-                            echo "  systemctl --user enable vllmd-kvm@vllmd-kvm-$((idx-1)).service"
-                        fi
-                    done
+                    echo "  systemctl --user enable vllmd-runtime@137.service"
                     echo
-                    log_info "To start the VMs immediately:"
-                    for idx in "${selected_indices[@]}"; do
-                        if [[ $idx =~ ^[0-9]+$ && $idx -ge 1 && $idx -le ${#gpu_list[@]} ]]; then
-                            echo "  systemctl --user start vllmd-kvm@vllmd-kvm-$((idx-1)).service"
-                        fi
-                    done
+                    log_info "To start the runtimes immediately:"
+                    echo "  systemctl --user start vllmd-runtime@137.service"
                     echo
-                    log_info "User linger has been enabled, so the VMs will persist after logout."
+                    log_info "User linger has been enabled, so the runtimes will persist after logout."
                 fi
             fi
         fi
@@ -1281,7 +1501,7 @@ main() {
     
     # Create a summary file with all created files
     if [[ "${DRY_RUN}" -ne 1 ]] && [[ ${#CREATED_FILES[@]} -gt 0 ]]; then
-        local summary_filepath="${VLLMD_KVM_CONFIG_PATH}/installation-summary.md"
+        local summary_filepath="${VLLMD_RUNTIME_CONFIG_PATH}/installation-summary.md"
         local summary_content="# VLLMD Installation Summary\n\n"
         summary_content+="Installation completed on $(date '+%Y-%m-%d %H:%M:%S')\n\n"
         summary_content+="## Created Files\n\n"
