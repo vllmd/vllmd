@@ -1,6 +1,6 @@
 # VLLMD-Hypervisor System Roadmap
 
-This document outlines the planned development roadmap for the VLLMD KVM virtualization system,
+This document outlines the planned development roadmap for the VLLMD Hypervisor runtime virtualization system,
 focusing on enhancements, new features, and long-term architecture goals.
 
 ## Precheck System
