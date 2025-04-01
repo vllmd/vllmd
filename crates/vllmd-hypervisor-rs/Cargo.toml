@@ -1,9 +1,13 @@
 [package]
 name = "vllmd-hypervisor"
 version = "0.1.0"
-edition = "2021"
 description = "vllmd-hypervisor is the modern industry standards-based hypervisor to securely contain LLM inferencing workloads."
+authors = ["Steven Dake <steven.dake@gmail.com>", "Steven Dake <steve@computelify.com>"]
+readme = "README.md"
+homepage = "https://github.com/vllmd/vllmd"
+repository = "https://github.com/vllmd/vllmd/crates/vllmd-hypervisor-rs"
 license = "Apache-2.0"
+edition = "2021"
 
 [dependencies]
 log = "0.4"
@@ -29,10 +33,6 @@ chrono = "0.4"
 [[bin]]
 name = "vllmd-hypervisor"
 path = "src/main.rs"
-
-[[bin]]
-name = "log-renderer"
-path = "log-renderer.rs"
 
 [features]
 default = ["kvm", "io_uring"]
