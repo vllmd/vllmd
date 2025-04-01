@@ -23,6 +23,8 @@ The `vllmd-hypervisor` manages the virtualization component with these capabilit
 - Automated network configuration.
 - Authentication, authorization, and auditing occur on each boundary.
 
+- Take a look at  the code -> [vllmd-hypervisor-rs](crates/vllmd-hypervisor/README.md).
+
 ### vllmd-runtime-assembler
 
 The `vllmd-runtime-assembler` creates production-ready virtualized runtimes that contain:
