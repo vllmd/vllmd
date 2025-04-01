@@ -11,7 +11,7 @@ The `precheck.sh` script examines various Linux kernel interfaces, files, and sy
 | **CPU Virtualization** | CPU Features | `/proc/cpuinfo` | Checks for VMX/SVM flags indicating virtualization support | User |
 | | CPU Topology | `lscpu` output | Retrieves socket count, cores per socket, and threads per core | User |
 | | Nested Virtualization | `/sys/module/kvm_intel/parameters/nested` or<br>`/sys/module/kvm_amd/parameters/nested` | Checks if nested virtualization is enabled | User |
-| **KVM Status** | KVM Device | `/dev/kvm` | Verifies KVM device exists and is accessible | User |
+| **Runtime Virtualization** | KVM Device | `/dev/kvm` | Verifies KVM device exists and is accessible | User |
 | | KVM Group Membership | `groups` command | Determines if user is in kvm group | User |
 | **IOMMU Support** | Kernel Parameters | `/proc/cmdline` | Checks for IOMMU enablement flags (intel_iommu=on, amd_iommu=on) | User |
 | | IOMMU Groups | `/sys/kernel/iommu_groups/` | Examines IOMMU group structure and isolation | User |
